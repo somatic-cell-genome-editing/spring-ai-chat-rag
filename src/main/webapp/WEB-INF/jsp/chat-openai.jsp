@@ -4,7 +4,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>AI Chat Demo - OpenAI</title>
+    <title>SCGE Chatbot</title>
     <%
         // Obtain the authentication object and username from the Spring Security context.
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
@@ -15,9 +15,6 @@
     <link rel="stylesheet" href="<%= contextPath %>/resources/css/style.css"/>
     <style>
         /* OpenAI-specific styling */
-        #header {
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-        }
         .openai-badge {
             display: inline-block;
             background: #00a67e;
@@ -120,10 +117,13 @@
     <!-- Chat Area -->
     <div id="chatArea">
         <div id="header">
-            <h2>AI Chat Demo <span class="openai-badge">OpenAI</span></h2>
+<%--            <h2>AI Chat Demo <span class="openai-badge">OpenAI</span></h2>--%>
+            <h2>SCGE Platform AI Assistant</h2>
+            <%if((request.getServerName().equals("localhost") )){%>
             <div class="model-switch">
                 <a href="<%= contextPath %>/" target="_blank">Switch to Ollama</a>
             </div>
+            <%}%>
             <div class="user-info">
                 Welcome, <%= username %>!
                 <%--                <form action="<%= contextPath %>/logout" method="post" style="display: inline;">--%>
@@ -136,15 +136,15 @@
         <div class="start-over-section">
             <button id="startOverBtn" class="start-over-btn">Start over</button>
         </div>
-<%--        <%if((request.getServerName().equals("localhost") )){%>--%>
+        <%if(!((request.getServerName().equals("localhost") ))){%>
         <div id="controls">
             <button id="uploadFile" class="upload-btn">Upload File</button>
             <button id="processUrl" class="upload-btn">Process URL</button>
             <button id="loadTrials" class="upload-btn">Load Clinical Trials</button>
         </div>
-<%--        <%}%>--%>
+        <%}%>
         <div class="input-area">
-            <textarea id="userInput" placeholder="Ask OpenAI a question about your documents..." rows="3"></textarea>
+            <textarea id="userInput" placeholder="Ask AI a question about fda documents..." rows="3"></textarea>
             <button id="typedTextSubmit" class="submit-btn">Send</button>
         </div>
     </div>

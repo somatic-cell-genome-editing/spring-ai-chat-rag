@@ -7,15 +7,18 @@ const addToTranscript = (who, text) => {
 
 const createTranscriptEntry = (who, name, text) => {
     const modelBadge = (who === "AI") ? '<span style="background: #00a67e; color: white; padding: 2px 6px; border-radius: 10px; font-size: 0.8em; margin-left: 5px;">OpenAI</span>' : '';
+    // <div><b>${name}:</b> ${modelBadge} ${text}</div>
     return `
     <div class="${who}Entry">
-        <div><b>${name}:</b> ${modelBadge} ${text}</div>
+        <div><b>${name}:</b> ${text}</div>
     </div>`;
 };
 
 const handleResponse = (response) => {
-    // Convert NCT IDs to links before adding to transcript
-    const enhancedAnswer = convertNCTToLinks(response.answer);
+    // Convert NCT IDs and .md filenames to links before adding to transcript
+    let enhancedAnswer = convertNCTToLinks(response.answer);
+    enhancedAnswer = convertMdToLinks(enhancedAnswer);
+    enhancedAnswer = boldSourcesUsed(enhancedAnswer);
     addToTranscript("AI", enhancedAnswer);
     // addToTranscript("AI", response.answer);
 };
@@ -28,6 +31,41 @@ const convertNCTToLinks = (text) => {
         const url = `https://scge.mcw.edu/platform/data/clinicalTrials/report/${nctId}`;
         return `<a href="${url}" target="_blank">${nctId}</a>`;
     });
+};
+
+// Function to convert .md filenames to clickable PDF links
+const convertMdToLinks = (text) => {
+    // Pattern to match filenames ending with .md
+    // Matches: word characters, spaces, hyphens, underscores, and other common filename chars followed by .md
+    const mdPattern = /([A-Za-z0-9_\-\s\(\)\.]+\.md)\b/g;
+
+    return text.replace(mdPattern, (match, filename) => {
+        // Remove .md extension and add .pdf
+        const baseFilename = filename.slice(0, -3); // Remove '.md'
+        const pdfFilename = baseFilename + '.pdf';
+
+        // URL encode the filename to handle spaces and special characters
+        const encodedFilename = encodeURIComponent(pdfFilename);
+
+        // Check if running on localhost and redirect to dev server for PDFs
+        let basePath;
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            basePath = 'https://dev.scge.mcw.edu/spring-ai-chat-rag';
+        } else {
+            basePath = contextPath;
+        }
+
+        // Use basePath for URL
+        const url = `${basePath}/docs/${encodedFilename}`;
+
+        // Display the filename without .md extension
+        return `<a href="${url}" target="_blank">${baseFilename}</a>`;
+    });
+};
+
+// Function to make "SOURCES_USED:" bold
+const boldSourcesUsed = (text) => {
+    return text.replace(/SOURCES_USED:/g, '<strong>SOURCES USED:</strong>');
 };
 
 // API Interactions - OpenAI Endpoints
@@ -262,7 +300,7 @@ const initUIEvents = () => {
     }
 
     // Welcome message
-    addToTranscript("System", "Welcome to OpenAI Chat! Upload documents and ask questions about them.");
+    addToTranscript("System", "Welcome to SCGE Platform AI Assistant! Ask questions about the fda documents, clinical trials etc.");
 
     const startOverBtn = document.getElementById('startOverBtn');
     startOverBtn.addEventListener('click',startOverChat);

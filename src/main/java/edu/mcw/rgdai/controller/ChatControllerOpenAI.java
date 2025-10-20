@@ -94,8 +94,8 @@ public class ChatControllerOpenAI {
         try {
             List<Document> documents = openaiVectorStore.similaritySearch(
                     SearchRequest.query(question.getQuestion())
-                            .withTopK(8)
-                            .withSimilarityThreshold(0.38));
+                            .withTopK(10)
+                            .withSimilarityThreshold(0.35));
             LOG.info("🔵 OpenAI - Retrieved {} documents from vector store", documents.size());
 
             if (documents.isEmpty()) {
@@ -109,6 +109,10 @@ public class ChatControllerOpenAI {
             StringBuilder contextBuilder = new StringBuilder();
             for (Document doc : documents) {
                 String filename = doc.getMetadata().getOrDefault("filename", "unknown").toString();
+                // Extract just the NCT ID if filename starts with NCT and contains a colon
+                if (filename.startsWith("NCT") && filename.contains(":")) {
+                    filename = filename.split(":")[0];
+                }
                 contextBuilder.append(String.format("--- FROM: %s ---\n%s\n\n", filename, doc.getContent()));
             }
             String systemMessage = String.format("""
@@ -120,7 +124,11 @@ public class ChatControllerOpenAI {
         ---------------------
         %s
         ---------------------
-        When you use information from the context above, add "SOURCES_USED:[]" followed by the specific filenames that contained the information you referenced in your response. Only list sources you actually drew information from.
+
+        MANDATORY: At the end of your response, add "SOURCES_USED: filename1.md, filename2.md"
+        - List all files from the context above that you referenced
+        - Use exact filenames from "--- FROM: filename ---" markers
+        - Separate multiple files with commas
         """, contextBuilder);
 
 //            String systemMessage = String.format("""
@@ -134,40 +142,6 @@ public class ChatControllerOpenAI {
 //                    ---------------------
 //                    Add "SOURCES_USED: %s" when using context.
 //                    """, contextBuilder, filenames);
-
-//            String systemMessage = String.format("""
-//Answer using the context below OR conversation history. Do NOT use external knowledge about general topics, mountains, etc.
-//When asked about "last question" or "previous question", refer to the most recent user message in the conversation.
-//IMPORTANT: When asked about "last question" or "previous question", only refer to questions YOU were asked in THIS conversation, not questions mentioned in the document context.
-//
-//Context:
-//---------------------
-//%s
-//---------------------
-//
-//SOURCE CITATION RULES:
-//- Add "SOURCES_USED: [filenames]" when you use information from the context
-//- Only list sources that you actually reference or quote in your response
-//- If you pull specific facts from multiple documents, list all those documents
-//- If you only use information from one document, only list that one document
-//- DO NOT list sources that you did not actually use in your response
-//
-//Available sources: %s
-//""", contextBuilder.toString(), filenames);
-//            String systemMessage = String.format("""
-//Answer using the context below OR conversation history. Do NOT use external knowledge about general topics, mountains, etc.
-//When asked about "last question" or "previous question", refer to the most recent user message in the conversation.
-//IMPORTANT: When asked about "last question" or "previous question", only refer to questions YOU were asked in THIS conversation, not questions mentioned in the document context.
-//
-//Context:
-//---------------------
-//%s
-//---------------------
-//
-//When you use information from the context above, add "SOURCES_USED:" followed by the specific filenames that contained the information you referenced in your response. Only list sources you actually drew information from.
-//
-//Available sources: %s
-//""", contextBuilder.toString());
 
             String response = chatClient.prompt()
                     .system(systemMessage)
