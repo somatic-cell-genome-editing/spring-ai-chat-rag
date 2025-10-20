@@ -125,10 +125,12 @@ public class ChatControllerOpenAI {
         %s
         ---------------------
 
-        MANDATORY: At the end of your response, add "SOURCES_USED: filename1.md, filename2.md"
-        - List all files from the context above that you referenced
+        MANDATORY: At the end of your response, add "SOURCES_USED: " followed by a comma-separated list of filenames
+        - ONLY list files that you ACTUALLY USED to generate your answer
+        - DO NOT list files that were in the context but you did not use
         - Use exact filenames from "--- FROM: filename ---" markers
-        - Separate multiple files with commas
+        - Separate multiple files with commas (no spaces after commas)
+        - Example: SOURCES_USED: file1.md,file2.md,file3.md
         """, contextBuilder);
 
 //            String systemMessage = String.format("""

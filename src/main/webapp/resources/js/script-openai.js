@@ -40,6 +40,8 @@ const convertMdToLinks = (text) => {
     const mdPattern = /([A-Za-z0-9_\-\s\(\)\.]+\.md)\b/g;
 
     return text.replace(mdPattern, (match, filename) => {
+        // Trim leading/trailing spaces from filename
+        filename = filename.trim();
         // Remove .md extension and add .pdf
         const baseFilename = filename.slice(0, -3); // Remove '.md'
         const pdfFilename = baseFilename + '.pdf';
