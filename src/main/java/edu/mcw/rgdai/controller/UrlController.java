@@ -147,7 +147,6 @@ public class UrlController {
                     "NCT06272149", "NCT04125732", "NCT06831825", "NCT06722170", "NCT06539208", "NCT06292650", "NCT06066008", "NCT03207009",
                     "NCT03852498", "NCT04293185", "NCT03328130", "NCT06255782"
             );
-
             LOG.info("Manual NCT IDs list loaded: {} clinical trials to process", nctIds.size());
 
             List<String> processed = new ArrayList<>();
@@ -288,20 +287,30 @@ public class UrlController {
             URL url = new URL(urlString);
             String path = url.getPath();
 
-            String nctId;
+            // Check if this is a clinical trial URL
+            boolean isClinicalTrialUrl = urlString.contains("/clinicalTrials/report/") ||
+                                         urlString.contains("/report/clinicalTrials/");
+
+            String filename;
             if (path != null && !path.isEmpty() && !path.equals("/")) {
                 String[] pathParts = path.split("/");
                 String lastPart = pathParts[pathParts.length - 1];
                 if (!lastPart.isEmpty()) {
-                    nctId = lastPart;
+                    filename = lastPart;
                 } else {
-                    nctId = url.getHost().replaceAll("\\.", "_");
+                    filename = url.getHost().replaceAll("\\.", "_");
                 }
             } else {
-                nctId = url.getHost().replaceAll("\\.", "_");
+                filename = url.getHost().replaceAll("\\.", "_");
             }
 
-            return nctId + ":" + urlString;
+            // For clinical trials, prepend "CLINICAL TRIAL: " to the NCTID
+            // For other URLs, append the full URL for uniqueness
+            if (isClinicalTrialUrl) {
+                return "CLINICAL TRIAL: " + filename;  // "CLINICAL TRIAL: NCT06285643"
+            } else {
+                return filename + ":" + urlString;  // "page_name:https://example.com/page"
+            }
 
         } catch (MalformedURLException e) {
             return "webpage_" + System.currentTimeMillis() + ":" + urlString;

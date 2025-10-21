@@ -2,6 +2,8 @@ package edu.mcw.rgdai.controller;
 
 import edu.mcw.rgdai.model.Answer;
 import edu.mcw.rgdai.model.Question;
+import edu.mcw.rgdai.model.DocumentEmbeddingOpenAI;
+import edu.mcw.rgdai.repository.DocumentEmbeddingOpenAIRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +24,7 @@ import org.springframework.http.ResponseEntity;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.ArrayList;
 import org.springframework.ai.openai.OpenAiChatOptions;
 
 @RestController
@@ -35,16 +38,19 @@ public class ChatControllerOpenAI {
     private final String configuredModel;
     private InMemoryChatMemory chatMemory;
     private final ChatModel openAiChatModel;
+    private final DocumentEmbeddingOpenAIRepository repository;
     private static final String CHAT_MEMORY_CONVERSATION_ID_KEY = "conversationId";
 
     public ChatControllerOpenAI(
             ApplicationContext context,
             @Qualifier("openaiVectorStore") VectorStore openaiVectorStore,
-            @Value("${spring.ai.openai.model}") String configuredModel) {
+            @Value("${spring.ai.openai.model}") String configuredModel,
+            DocumentEmbeddingOpenAIRepository repository) {
 
         LOG.info("🤖 Initializing OpenAI ChatController with system messages for doc context");
         this.openaiVectorStore = openaiVectorStore;
         this.configuredModel = configuredModel;
+        this.repository = repository;
         this.chatMemory = new InMemoryChatMemory();
 
         LOG.info("🎯 Configured OpenAI Model from properties: {}", configuredModel);
@@ -92,11 +98,31 @@ public class ChatControllerOpenAI {
         }
 
         try {
+            // Extract NCTIDs from the question
+            List<String> nctids = extractNCTIDs(question.getQuestion());
+            if (!nctids.isEmpty()) {
+                LOG.info("🔍 Found {} NCTIDs mentioned in question: {}", nctids.size(), nctids);
+            }
+
+            // Get documents via similarity search
             List<Document> documents = openaiVectorStore.similaritySearch(
                     SearchRequest.query(question.getQuestion())
                             .withTopK(10)
                             .withSimilarityThreshold(0.35));
-            LOG.info("🔵 OpenAI - Retrieved {} documents from vector store", documents.size());
+            LOG.info("🔵 OpenAI - Retrieved {} documents from similarity search", documents.size());
+
+            // If NCTIDs were mentioned, add those documents explicitly
+            if (!nctids.isEmpty()) {
+                int initialSize = documents.size();
+                for (String nctid : nctids) {
+                    List<Document> nctidDocs = getDocumentsByNCTID(nctid);
+                    documents.addAll(nctidDocs);
+                }
+                int addedCount = documents.size() - initialSize;
+                LOG.info("➕ Added {} documents for explicitly mentioned NCTIDs", addedCount);
+            }
+
+            LOG.info("🔵 OpenAI - Total documents for context: {}", documents.size());
 
             if (documents.isEmpty()) {
                 return new Answer("I don't have information about that topic in my knowledge base.");
@@ -217,5 +243,43 @@ public class ChatControllerOpenAI {
             request.getSession().setAttribute("openai_conversation_id", conversationId);
         }
         return conversationId;
+    }
+
+    /**
+     * Extract NCTIDs from question text (e.g., NCT06285643)
+     */
+    private List<String> extractNCTIDs(String question) {
+        List<String> nctids = new ArrayList<>();
+        if (question == null || question.trim().isEmpty()) {
+            return nctids;
+        }
+
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("NCT\\d+");
+        java.util.regex.Matcher matcher = pattern.matcher(question);
+        while (matcher.find()) {
+            nctids.add(matcher.group());
+        }
+        return nctids;
+    }
+
+    /**
+     * Get documents by NCTID directly from database
+     */
+    private List<Document> getDocumentsByNCTID(String nctid) {
+        String filename = "CLINICAL TRIAL: " + nctid;
+        List<DocumentEmbeddingOpenAI> docs = repository.findByFileName(filename);
+
+        LOG.debug("Direct lookup for NCTID {}: found {} documents", nctid, docs.size());
+
+        return docs.stream()
+                .map(de -> {
+                    Map<String, Object> metadata = Map.of(
+                            "filename", de.getFileName(),
+                            "id", de.getId(),
+                            "created_at", de.getCreatedAt()
+                    );
+                    return new Document(de.getChunk(), metadata);
+                })
+                .collect(java.util.stream.Collectors.toList());
     }
 }
