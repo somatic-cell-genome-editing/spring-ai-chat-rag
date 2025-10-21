@@ -147,6 +147,15 @@ body {
 .AIEntry {
     background-color: #f5f5f5;
     margin-right: 20%;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    max-width: 100%;
+}
+
+/* Sources Used formatting */
+.AIEntry strong {
+    display: inline-block;
+    margin-top: 0.45em;
 }
 
 .SystemEntry {

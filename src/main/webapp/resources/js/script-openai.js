@@ -52,7 +52,7 @@ const convertMdToLinks = (text) => {
         // Check if running on localhost and redirect to dev server for PDFs
         let basePath;
         if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            basePath = 'https://dev.scge.mcw.edu/spring-ai-chat-rag';
+            basePath = 'https://dev.scge.mcw.edu/assistant';
         } else {
             basePath = contextPath;
         }
@@ -65,9 +65,13 @@ const convertMdToLinks = (text) => {
     });
 };
 
-// Function to make "SOURCES_USED:" bold
+// Function to make "SOURCES_USED:" bold and format properly
 const boldSourcesUsed = (text) => {
-    return text.replace(/SOURCES_USED:/g, '<strong>SOURCES USED:</strong>');
+    // Add line break before SOURCES_USED if it's not already on its own line
+    // Also add spaces after commas in the sources list
+    return text.replace(/([^\n])\s*SOURCES_USED:\s*/g, '$1<br><strong>SOURCES USED:</strong> ')
+               .replace(/SOURCES_USED:\s*/g, '<strong>SOURCES USED:</strong> ')
+               .replace(/,(?=\S)/g, ', '); // Add space after comma if there isn't one
 };
 
 // API Interactions - OpenAI Endpoints
