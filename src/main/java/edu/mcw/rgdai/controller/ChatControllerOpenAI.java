@@ -25,6 +25,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import org.springframework.ai.openai.OpenAiChatOptions;
 
 @RestController
@@ -98,10 +100,19 @@ public class ChatControllerOpenAI {
         }
 
         try {
-            // Extract NCTIDs from the question
-            List<String> nctids = extractNCTIDs(question.getQuestion());
-            if (!nctids.isEmpty()) {
-                LOG.info("🔍 Found {} NCTIDs mentioned in question: {}", nctids.size(), nctids);
+            // Extract NCTIDs from current question
+            List<String> currentNCTIDs = extractNCTIDs(question.getQuestion());
+
+            // Get NCTIDs from previous conversation (stored in session)
+            Set<String> allNCTIDs = new HashSet<>(currentNCTIDs);
+            Set<String> sessionNCTIDs = (Set<String>) request.getSession().getAttribute("conversationNCTIDs");
+            if (sessionNCTIDs != null && !sessionNCTIDs.isEmpty()) {
+                allNCTIDs.addAll(sessionNCTIDs);
+                LOG.info("🔍 Retrieved {} NCTIDs from session: {}", sessionNCTIDs.size(), sessionNCTIDs);
+            }
+
+            if (!allNCTIDs.isEmpty()) {
+                LOG.info("🔍 Found {} unique NCTIDs in conversation (current + session): {}", allNCTIDs.size(), allNCTIDs);
             }
 
             // Get documents via similarity search
@@ -111,15 +122,15 @@ public class ChatControllerOpenAI {
                             .withSimilarityThreshold(0.35));
             LOG.info("🔵 OpenAI - Retrieved {} documents from similarity search", documents.size());
 
-            // If NCTIDs were mentioned, add those documents explicitly
-            if (!nctids.isEmpty()) {
+            // Add documents for all mentioned NCTIDs (current question + conversation history)
+            if (!allNCTIDs.isEmpty()) {
                 int initialSize = documents.size();
-                for (String nctid : nctids) {
+                for (String nctid : allNCTIDs) {
                     List<Document> nctidDocs = getDocumentsByNCTID(nctid);
                     documents.addAll(nctidDocs);
                 }
                 int addedCount = documents.size() - initialSize;
-                LOG.info("➕ Added {} documents for explicitly mentioned NCTIDs", addedCount);
+                LOG.info("➕ Added {} documents for {} NCTIDs mentioned in conversation", addedCount, allNCTIDs.size());
             }
 
             LOG.info("🔵 OpenAI - Total documents for context: {}", documents.size());
@@ -184,6 +195,20 @@ public class ChatControllerOpenAI {
                     .content();
 
             LOG.info("🔵 OpenAI - Generated response with system message approach using model: {}", configuredModel);
+
+            // Extract NCTIDs from AI response and store in session for future questions
+            List<String> responseNCTIDs = extractNCTIDs(response);
+            if (!responseNCTIDs.isEmpty()) {
+                Set<String> conversationNCTIDs = (Set<String>) request.getSession().getAttribute("conversationNCTIDs");
+                if (conversationNCTIDs == null) {
+                    conversationNCTIDs = new HashSet<>();
+                }
+                conversationNCTIDs.addAll(responseNCTIDs);
+                request.getSession().setAttribute("conversationNCTIDs", conversationNCTIDs);
+                LOG.info("💾 Stored {} NCTIDs in session. Total NCTIDs in conversation: {}", responseNCTIDs.size(), conversationNCTIDs.size());
+                LOG.debug("💾 Session NCTIDs: {}", conversationNCTIDs);
+            }
+
             return new Answer(response);
 
         } catch (Exception e) {
@@ -204,6 +229,8 @@ public class ChatControllerOpenAI {
             LOG.info("✅ OpenAI - Cleared memory for conversation ID: {}", oldId);
 
             request.getSession().removeAttribute("openai_conversation_id");
+            request.getSession().removeAttribute("conversationNCTIDs");
+            LOG.info("✅ OpenAI - Cleared session NCTIDs");
 
             String newId = "reset_" + System.currentTimeMillis();
             request.getSession().setAttribute("openai_conversation_id", newId);
