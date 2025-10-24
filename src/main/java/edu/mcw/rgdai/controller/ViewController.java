@@ -24,13 +24,19 @@ public class ViewController {
     @GetMapping("/chat")
     public String chat() {
         logger.info("Accessing chat page");
-        return "chat";
+        return "chat-openai";
     }
 
     @GetMapping("/chat-openai")
     public String chatOpenAi() {
         logger.info("Accessing chat page");
         return "chat-openai";
+    }
+
+    @GetMapping("/chat-ollama")
+    public String chatOllama() {
+        logger.info("Accessing chat page");
+        return "chat";
     }
 
 }
