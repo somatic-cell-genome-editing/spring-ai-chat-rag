@@ -136,11 +136,11 @@
         <div class="start-over-section">
             <button id="startOverBtn" class="start-over-btn">Start over</button>
         </div>
+        <button id="loadTrials" class="upload-btn">Load Clinical Trials</button>
         <%if((request.getServerName().equals("localhost"))){%>
         <div id="controls">
             <button id="uploadFile" class="upload-btn">Upload File</button>
             <button id="processUrl" class="upload-btn">Process URL</button>
-            <button id="loadTrials" class="upload-btn">Load Clinical Trials</button>
         </div>
         <%}%>
         <div class="input-area">
