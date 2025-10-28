@@ -5,9 +5,8 @@ import edu.mcw.rgdai.reader.UrlDocumentReader;
 import edu.mcw.rgdai.service.DocumentPreprocessor;
 import edu.mcw.rgdai.repository.DocumentEmbeddingOpenAIRepository;
 import edu.mcw.rgdai.model.DocumentEmbeddingOpenAI;
-// import edu.mcw.scge.dao.DataSourceFactory;
-// import edu.mcw.scge.dao.implementation.ClinicalTrailDAO;
-// import edu.mcw.scge.datamodel.ClinicalTrialRecord;
+import edu.mcw.scge.dao.DataSourceFactory;
+import edu.mcw.scge.dao.implementation.ClinicalTrailDAO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -19,7 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-// import javax.sql.DataSource;
+import javax.sql.DataSource;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
@@ -69,34 +68,15 @@ public class UrlController {
         LOG.info("Starting clinical trials loading process");
 
         try {
-            // TODO: COMMENTED OUT - Need to figure out dual database configuration with two different Spring configs
-            // Original DAO-based approach - will be restored once database connectivity issues are resolved
+            // Get NCT IDs from CurDS database using custom datasource
+            DataSource curationDS = DataSourceFactory.getInstance().getScgePlatformCurDataSource();
+            ClinicalTrailDAO dao = new ClinicalTrailDAO(curationDS);
+            List<String> nctIds = dao.getAllNctIds();
+            LOG.info("Retrieved {} NCT IDs from CurDS database", nctIds.size());
+
+            // COMMENTED OUT - Hardcoded NCT IDs list (380 IDs from query select nctId from clinical_trial_record)
+            // Replaced with dynamic retrieval from CurDS database above
             /*
-            ClinicalTrailDAO dao = new ClinicalTrailDAO();
-            DataSource ds = dao.getDataSource();
-            LOG.info("DataSource class: {}", ds.getClass().getName());
-
-            try {
-                java.lang.reflect.Method getUrlMethod = ds.getClass().getMethod("getUrl");
-                String url = (String) getUrlMethod.invoke(ds);
-                LOG.info("Database URL from DataSource: {}", url);
-
-                java.lang.reflect.Method getUsernameMethod = ds.getClass().getMethod("getUsername");
-                String username = (String) getUsernameMethod.invoke(ds);
-                LOG.info("Database Username from DataSource: {}", username);
-
-            } catch (Exception reflectionError) {
-                LOG.warn("Could not get URL/username via reflection: {}", reflectionError.getMessage());
-            }
-
-            LOG.info("=== END DATABASE CONNECTION DETAILS ===");
-            List<ClinicalTrialRecord> trials = new ClinicalTrailDAO().getAllClinicalTrailRecords();
-            DataSourceFactory.getInstance().getDataSource();
-            LOG.info("Found {} clinical trials to process", trials.size());
-            */
-
-            // TEMPORARY MANUAL APPROACH - Hardcoded NCT IDs list (380 IDs from query select nctId from clinical_trial_record)
-            // This replaces the DAO call above until dual database configuration is implemented
             List<String> nctIds = Arrays.asList(
                     "NCT05930561", "NCT05197270", "NCT04517149", "NCT04483440", "NCT06864988", "NCT04519749", "NCT05248230", "NCT04676048",
                     "NCT04145037", "NCT03454893", "NCT02556736", "NCT05407636", "NCT04704921", "NCT03315182", "NCT05725018", "NCT04783181",
@@ -147,7 +127,7 @@ public class UrlController {
                     "NCT06272149", "NCT04125732", "NCT06831825", "NCT06722170", "NCT06539208", "NCT06292650", "NCT06066008", "NCT03207009",
                     "NCT03852498", "NCT04293185", "NCT03328130", "NCT06255782"
             );
-            LOG.info("Manual NCT IDs list loaded: {} clinical trials to process", nctIds.size());
+            */
 
             List<String> processed = new ArrayList<>();
             List<String> failed = new ArrayList<>();
@@ -166,7 +146,8 @@ public class UrlController {
                     LOG.info("Processing trial: {}", nctId);
 
                     // Check if already exists in vector store
-                    List<DocumentEmbeddingOpenAI> existing = repository.findByFileName(nctId + ":" + url);
+                    // Use same filename format as extractFilenameFromUrl() for clinical trials
+                    List<DocumentEmbeddingOpenAI> existing = repository.findByFileName("CLINICAL TRIAL: " + nctId);
                     boolean isOverwrite = !existing.isEmpty();
 
                     // If exists, delete existing entries first
