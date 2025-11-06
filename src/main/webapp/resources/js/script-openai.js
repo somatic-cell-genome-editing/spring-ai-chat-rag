@@ -15,10 +15,14 @@ const createTranscriptEntry = (who, name, text) => {
 };
 
 const handleResponse = (response) => {
+    // Hide typing indicator
+    hideTypingIndicator();
+
     // Convert NCT IDs and .md filenames to links before adding to transcript
     let enhancedAnswer = convertNCTToLinks(response.answer);
     enhancedAnswer = convertMdToLinks(enhancedAnswer);
     enhancedAnswer = boldSourcesUsed(enhancedAnswer);
+    enhancedAnswer = cleanupClinicalTrialSources(enhancedAnswer);
     addToTranscript("AI", enhancedAnswer);
     // addToTranscript("AI", response.answer);
 };
@@ -74,8 +78,48 @@ const boldSourcesUsed = (text) => {
                .replace(/,(?=\S)/g, ', '); // Add space after comma if there isn't one
 };
 
+// Function to remove "CLINICAL TRIAL:" prefix from sources
+const cleanupClinicalTrialSources = (text) => {
+    // Remove "CLINICAL TRIAL: " from the sources section
+    return text.replace(/CLINICAL TRIAL:\s*/g, '');
+};
+
+// Show typing indicator
+const showTypingIndicator = () => {
+    const transcript = document.querySelector('#transcript');
+
+    // Create typing indicator HTML
+    const indicatorHTML = `
+        <div id="typingIndicator" class="typing-indicator active">
+            <div class="typing-dots">
+                <span>thinking</span>
+                <div class="dot"></div>
+                <div class="dot"></div>
+                <div class="dot"></div>
+            </div>
+        </div>
+    `;
+
+    // Append it to transcript
+    transcript.innerHTML += indicatorHTML;
+
+    // Scroll to show the typing indicator
+    transcript.scrollTop = transcript.scrollHeight;
+};
+
+// Hide typing indicator
+const hideTypingIndicator = () => {
+    const indicator = document.getElementById('typingIndicator');
+    if (indicator) {
+        indicator.remove();
+    }
+};
+
 // API Interactions - OpenAI Endpoints
 const postQuestion = (question) => {
+    // Show typing indicator
+    showTypingIndicator();
+
     fetch(contextPath + "/chat-openai", {
         method: "POST",
         headers: {
@@ -87,6 +131,7 @@ const postQuestion = (question) => {
         .then(handleResponse)
         .catch(error => {
             console.error('Error:', error);
+            hideTypingIndicator();
             addToTranscript("AI", "Sorry, there was an error processing your request with OpenAI.");
         });
 };

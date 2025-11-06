@@ -128,4 +128,86 @@ public class PostgresVectorStoreOpenAI implements VectorStore {
     public List<String> getAvailableFiles() {
         return repository.findDistinctFileNames();
     }
+
+    /**
+     * NEW METHOD: Calculate cosine similarity between two vectors
+     * Returns value between 0 (completely different) and 1 (identical)
+     */
+    private double cosineSimilarity(float[] vectorA, float[] vectorB) {
+        if (vectorA.length != vectorB.length) {
+            throw new IllegalArgumentException("Vectors must have same dimensions");
+        }
+
+        double dotProduct = 0.0;
+        double normA = 0.0;
+        double normB = 0.0;
+
+        for (int i = 0; i < vectorA.length; i++) {
+            dotProduct += vectorA[i] * vectorB[i];
+            normA += vectorA[i] * vectorA[i];
+            normB += vectorB[i] * vectorB[i];
+        }
+
+        return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+    }
+
+    /**
+     * NEW METHOD: Enhanced similarity search that includes similarity scores in metadata
+     * This is used for re-ranking purposes
+     */
+    public List<Document> similaritySearchWithScores(SearchRequest request) {
+        LOG.info("Starting OpenAI similarity search WITH SCORES for query: '{}'", request.getQuery());
+        LOG.info("Search parameters - TopK: {}, Similarity threshold: {}",
+                request.getTopK(), request.getSimilarityThreshold());
+
+        try {
+            // Generate embedding for the search query
+            EmbeddingResponse response = embeddingModel.embedForResponse(List.of(request.getQuery()));
+            float[] queryEmbedding = response.getResults().get(0).getOutput();
+            LOG.debug("Generated query embedding vector of size: {}", queryEmbedding.length);
+
+            // Find nearest neighbors from the database
+            List<DocumentEmbeddingOpenAI> nearest;
+            if (request.getSimilarityThreshold() > 0) {
+                nearest = repository.findNearestNeighborsWithThreshold(
+                        queryEmbedding, request.getTopK(), request.getSimilarityThreshold());
+                LOG.info("Using similarity threshold: {}", request.getSimilarityThreshold());
+            } else {
+                nearest = repository.findNearestNeighbors(queryEmbedding, request.getTopK());
+            }
+
+            LOG.info("Found {} documents in OpenAI database", nearest.size());
+
+            // Convert to Document objects WITH similarity scores
+            List<Document> results = new java.util.ArrayList<>();
+            for (int i = 0; i < nearest.size(); i++) {
+                DocumentEmbeddingOpenAI de = nearest.get(i);
+
+                // Calculate similarity score between query and document embeddings
+                float[] docEmbedding = de.getEmbedding().toArray();
+                double similarity = cosineSimilarity(queryEmbedding, docEmbedding);
+
+                Map<String, Object> metadata = new java.util.HashMap<>();
+                metadata.put("filename", de.getFileName());
+                metadata.put("id", de.getId());
+                metadata.put("created_at", de.getCreatedAt());
+                metadata.put("similarity", similarity);  // Add similarity score
+                metadata.put("distance", 1.0 - similarity);  // Add distance (inverse of similarity)
+
+                results.add(new Document(de.getChunk(), metadata));
+
+                // Log first 3 with scores
+                if (i < 3) {
+                    LOG.debug("Result {}: similarity={:.4f}, from {}", i + 1, similarity, de.getFileName());
+                }
+            }
+
+            LOG.info("Returning {} documents with similarity scores from OpenAI search", results.size());
+            return results;
+
+        } catch (Exception e) {
+            LOG.error("Error during OpenAI similarity search with scores: {}", e.getMessage(), e);
+            throw new RuntimeException("OpenAI similarity search failed", e);
+        }
+    }
 }

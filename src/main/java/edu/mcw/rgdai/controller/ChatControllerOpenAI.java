@@ -4,6 +4,7 @@ import edu.mcw.rgdai.model.Answer;
 import edu.mcw.rgdai.model.Question;
 import edu.mcw.rgdai.model.DocumentEmbeddingOpenAI;
 import edu.mcw.rgdai.repository.DocumentEmbeddingOpenAIRepository;
+import edu.mcw.rgdai.vectorstore.PostgresVectorStoreOpenAI;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -115,12 +116,32 @@ public class ChatControllerOpenAI {
                 LOG.info("🔍 Found {} unique NCTIDs in conversation (current + session): {}", allNCTIDs.size(), allNCTIDs);
             }
 
-            // Get documents via similarity search
-            List<Document> documents = openaiVectorStore.similaritySearch(
-                    SearchRequest.query(question.getQuestion())
-                            .withTopK(10)
-                            .withSimilarityThreshold(0.35));
-            LOG.info("🔵 OpenAI - Retrieved {} documents from similarity search", documents.size());
+            // STAGE 1: Broad retrieval - Get top 80 candidates from semantic search WITH SCORES
+            List<Document> candidates;
+            if (openaiVectorStore instanceof PostgresVectorStoreOpenAI) {
+                // Use the enhanced method that includes similarity scores in metadata
+                PostgresVectorStoreOpenAI vectorStoreWithScores = (PostgresVectorStoreOpenAI) openaiVectorStore;
+                candidates = vectorStoreWithScores.similaritySearchWithScores(
+                        SearchRequest.query(question.getQuestion())
+                                .withTopK(80)
+                                .withSimilarityThreshold(0.35));
+            } else {
+                // Fallback to regular method (won't have scores for re-ranking)
+                candidates = openaiVectorStore.similaritySearch(
+                        SearchRequest.query(question.getQuestion())
+                                .withTopK(80)
+                                .withSimilarityThreshold(0.35));
+            }
+            LOG.info("🔵 Stage 1: Retrieved {} candidates from semantic similarity search", candidates.size());
+
+            // STAGE 2: Re-rank using semantic + keyword scoring
+            List<Document> documents = rerankDocuments(candidates, question.getQuestion());
+
+            // Take top 40 after re-ranking
+            if (documents.size() > 40) {
+                documents = documents.subList(0, 40);
+            }
+            LOG.info("✨ Stage 2: Re-ranked and selected top {} documents", documents.size());
 
             // Add documents for all mentioned NCTIDs (current question + conversation history)
             if (!allNCTIDs.isEmpty()) {
@@ -162,6 +183,11 @@ public class ChatControllerOpenAI {
         %s
         ---------------------
 
+        CRITICAL INSTRUCTIONS:
+        - Scan the ENTIRE context carefully, including all documents from beginning to end
+        - When multiple clinical trials are relevant to the question, list ALL of them with their NCTIDs
+        - Do not summarize or skip relevant sources just to be brief
+
         MANDATORY: At the end of your response, add "SOURCES_USED: " followed by a comma-separated list of filenames
         - ONLY list files that you ACTUALLY USED to generate your answer
         - DO NOT list files that were in the context but you did not use
@@ -188,7 +214,7 @@ public class ChatControllerOpenAI {
                     .options(OpenAiChatOptions.builder()
                             .withStreamUsage(false)
                             .withModel(configuredModel)
-//                            .withTemperature(1.0)
+                            .withTemperature(1.0)
                             .build())
                     .advisors(spec -> spec.param(CHAT_MEMORY_CONVERSATION_ID_KEY, conversationId))
                     .call()
@@ -203,9 +229,13 @@ public class ChatControllerOpenAI {
                 if (conversationNCTIDs == null) {
                     conversationNCTIDs = new HashSet<>();
                 }
+                int beforeSize = conversationNCTIDs.size();
                 conversationNCTIDs.addAll(responseNCTIDs);
+                int afterSize = conversationNCTIDs.size();
+                int newNCTIDs = afterSize - beforeSize;
                 request.getSession().setAttribute("conversationNCTIDs", conversationNCTIDs);
-                LOG.info("💾 Stored {} NCTIDs in session. Total NCTIDs in conversation: {}", responseNCTIDs.size(), conversationNCTIDs.size());
+                LOG.info("💾 Found {} NCTID mentions in response, {} unique NCTIDs total in conversation ({} new)",
+                         responseNCTIDs.size(), conversationNCTIDs.size(), newNCTIDs);
                 LOG.debug("💾 Session NCTIDs: {}", conversationNCTIDs);
             }
 
@@ -308,5 +338,111 @@ public class ChatControllerOpenAI {
                     return new Document(de.getChunk(), metadata);
                 })
                 .collect(java.util.stream.Collectors.toList());
+    }
+
+    /**
+     * Extract meaningful query terms (removing stop words)
+     */
+    private Set<String> extractQueryTerms(String query) {
+        Set<String> terms = new HashSet<>();
+
+        // Common stop words to exclude
+        Set<String> stopWords = Set.of("the", "a", "an", "is", "are", "was", "were",
+                                       "in", "on", "at", "to", "for", "of", "with",
+                                       "what", "how", "when", "where", "which", "that",
+                                       "this", "these", "those", "be", "been", "being",
+                                       "have", "has", "had", "do", "does", "did");
+
+        // Split query into words and filter
+        String[] words = query.toLowerCase()
+                .replaceAll("[^a-z0-9\\s]", " ") // Replace punctuation with space
+                .split("\\s+");
+
+        for (String word : words) {
+            if (word.length() > 2 && !stopWords.contains(word)) {
+                terms.add(word);
+            }
+        }
+
+        // Extract NCTIDs (case-insensitive match, case-sensitive store)
+        java.util.regex.Pattern nctPattern = java.util.regex.Pattern.compile("(?i)NCT\\d+");
+        java.util.regex.Matcher nctMatcher = nctPattern.matcher(query);
+        while (nctMatcher.find()) {
+            terms.add(nctMatcher.group().toUpperCase());
+        }
+
+        LOG.debug("🔑 Extracted query terms: {}", terms);
+        return terms;
+    }
+
+    /**
+     * Re-rank documents by combining semantic score + keyword matching
+     */
+    private List<Document> rerankDocuments(List<Document> candidates, String query) {
+        Set<String> queryTerms = extractQueryTerms(query);
+
+        if (queryTerms.isEmpty()) {
+            LOG.warn("⚠️ No query terms extracted, returning original order");
+            return candidates;
+        }
+
+        // Score and sort documents
+        List<ScoredDocument> scoredDocs = candidates.stream()
+                .map(doc -> {
+                    // Get semantic similarity score (already in metadata as distance)
+                    Double distance = (Double) doc.getMetadata().getOrDefault("distance", 1.0);
+                    double semanticScore = 1.0 - distance; // Convert distance to similarity
+
+                    // Calculate keyword match score
+                    String content = doc.getContent().toLowerCase();
+                    long matchCount = queryTerms.stream()
+                            .filter(term -> content.contains(term))
+                            .count();
+                    double keywordScore = (double) matchCount / queryTerms.size();
+
+                    // Combined score: 70% semantic + 30% keyword
+                    double finalScore = (0.7 * semanticScore) + (0.3 * keywordScore);
+
+                    return new ScoredDocument(doc, finalScore, semanticScore, keywordScore, matchCount);
+                })
+                .sorted((a, b) -> Double.compare(b.finalScore, a.finalScore)) // Descending order
+                .collect(java.util.stream.Collectors.toList());
+
+        // Log top 10 for debugging
+        LOG.info("🎯 Re-ranking results (top 10):");
+        for (int i = 0; i < Math.min(10, scoredDocs.size()); i++) {
+            ScoredDocument sd = scoredDocs.get(i);
+            LOG.info("  {}. {} - Final: {}, Semantic: {}, Keyword: {}/{} = {}",
+                    i + 1,
+                    sd.doc.getMetadata().get("filename"),
+                    String.format("%.4f", sd.finalScore),
+                    String.format("%.4f", sd.semanticScore),
+                    sd.matchCount,
+                    queryTerms.size(),
+                    String.format("%.2f", sd.keywordScore));
+        }
+
+        return scoredDocs.stream()
+                .map(sd -> sd.doc)
+                .collect(java.util.stream.Collectors.toList());
+    }
+
+    /**
+     * Helper class to hold scored documents during re-ranking
+     */
+    private static class ScoredDocument {
+        final Document doc;
+        final double finalScore;
+        final double semanticScore;
+        final double keywordScore;
+        final long matchCount;
+
+        ScoredDocument(Document doc, double finalScore, double semanticScore, double keywordScore, long matchCount) {
+            this.doc = doc;
+            this.finalScore = finalScore;
+            this.semanticScore = semanticScore;
+            this.keywordScore = keywordScore;
+            this.matchCount = matchCount;
+        }
     }
 }
