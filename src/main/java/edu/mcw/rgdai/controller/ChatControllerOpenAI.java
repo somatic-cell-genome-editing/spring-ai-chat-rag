@@ -5,7 +5,9 @@ import edu.mcw.rgdai.model.Question;
 import edu.mcw.rgdai.model.DocumentEmbeddingOpenAI;
 import edu.mcw.rgdai.repository.DocumentEmbeddingOpenAIRepository;
 import edu.mcw.rgdai.vectorstore.PostgresVectorStoreOpenAI;
+import edu.mcw.rgdai.service.RecaptchaService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -42,38 +44,41 @@ public class ChatControllerOpenAI {
     private InMemoryChatMemory chatMemory;
     private final ChatModel openAiChatModel;
     private final DocumentEmbeddingOpenAIRepository repository;
+    private final RecaptchaService recaptchaService;
     private static final String CHAT_MEMORY_CONVERSATION_ID_KEY = "conversationId";
 
     public ChatControllerOpenAI(
             ApplicationContext context,
             @Qualifier("openaiVectorStore") VectorStore openaiVectorStore,
             @Value("${spring.ai.openai.model}") String configuredModel,
-            DocumentEmbeddingOpenAIRepository repository) {
+            DocumentEmbeddingOpenAIRepository repository,
+            RecaptchaService recaptchaService) {
 
-        LOG.info("🤖 Initializing OpenAI ChatController with system messages for doc context");
+        LOG.info("Initializing OpenAI ChatController with system messages for doc context");
         this.openaiVectorStore = openaiVectorStore;
         this.configuredModel = configuredModel;
         this.repository = repository;
+        this.recaptchaService = recaptchaService;
         this.chatMemory = new InMemoryChatMemory();
 
-        LOG.info("🎯 Configured OpenAI Model from properties: {}", configuredModel);
+        LOG.info("Configured OpenAI Model from properties: {}", configuredModel);
 
         Map<String, ChatModel> chatModels = context.getBeansOfType(ChatModel.class);
         ChatModel foundModel = null;
         for (Map.Entry<String, ChatModel> entry : chatModels.entrySet()) {
             if (entry.getValue().getClass().getSimpleName().toLowerCase().contains("openai")) {
                 foundModel = entry.getValue();
-                LOG.info("✅ Found OpenAI ChatModel: {}", entry.getKey());
-                LOG.info("📋 ChatModel Class: {}", entry.getValue().getClass().getName());
+                LOG.info("Found OpenAI ChatModel: {}", entry.getKey());
+                LOG.info("ChatModel Class: {}", entry.getValue().getClass().getName());
                 break;
             }
         }
         if (foundModel == null) {
-            throw new RuntimeException("❌ OpenAI ChatModel not found!");
+            throw new RuntimeException("OpenAI ChatModel not found!");
         }
         this.openAiChatModel = foundModel;
         this.chatClient = buildClient(openAiChatModel, this.chatMemory);
-        LOG.info("✅ OpenAI ChatClient initialized successfully with model: {}", configuredModel);
+        LOG.info("OpenAI ChatClient initialized successfully with model: {}", configuredModel);
     }
 
     private ChatClient buildClient(ChatModel model, InMemoryChatMemory memory) {
@@ -90,11 +95,11 @@ public class ChatControllerOpenAI {
                        Authentication user,
                        HttpServletRequest request) {
 
-        LOG.info("🔵 OpenAI - Received question: {}", question.getQuestion());
-        LOG.info("🎯 Processing with model: {}", configuredModel);
+        LOG.info("OpenAI - Received question: {}", question.getQuestion());
+        LOG.info("Processing with model: {}", configuredModel);
 
         String conversationId = getOrCreateConversationId(user, request);
-        LOG.info("🔵 Using conversation ID: {}", conversationId);
+        LOG.info("Using conversation ID: {}", conversationId);
 
         if (isGreeting(question.getQuestion())) {
             return new Answer("Hello! I'm the OpenAI version. I can help you with questions about the documents in my knowledge base. What would you like to know?");
@@ -109,11 +114,11 @@ public class ChatControllerOpenAI {
             Set<String> sessionNCTIDs = (Set<String>) request.getSession().getAttribute("conversationNCTIDs");
             if (sessionNCTIDs != null && !sessionNCTIDs.isEmpty()) {
                 allNCTIDs.addAll(sessionNCTIDs);
-                LOG.info("🔍 Retrieved {} NCTIDs from session: {}", sessionNCTIDs.size(), sessionNCTIDs);
+                LOG.info("Retrieved {} NCTIDs from session: {}", sessionNCTIDs.size(), sessionNCTIDs);
             }
 
             if (!allNCTIDs.isEmpty()) {
-                LOG.info("🔍 Found {} unique NCTIDs in conversation (current + session): {}", allNCTIDs.size(), allNCTIDs);
+                LOG.info("Found {} unique NCTIDs in conversation (current + session): {}", allNCTIDs.size(), allNCTIDs);
             }
 
             // STAGE 1: Broad retrieval - Get top 80 candidates from semantic search WITH SCORES
@@ -132,7 +137,7 @@ public class ChatControllerOpenAI {
                                 .withTopK(80)
                                 .withSimilarityThreshold(0.35));
             }
-            LOG.info("🔵 Stage 1: Retrieved {} candidates from semantic similarity search", candidates.size());
+            LOG.info("Stage 1: Retrieved {} candidates from semantic similarity search", candidates.size());
 
             // STAGE 2: Re-rank using semantic + keyword scoring
             List<Document> documents = rerankDocuments(candidates, question.getQuestion());
@@ -141,7 +146,7 @@ public class ChatControllerOpenAI {
             if (documents.size() > 40) {
                 documents = documents.subList(0, 40);
             }
-            LOG.info("✨ Stage 2: Re-ranked and selected top {} documents", documents.size());
+            LOG.info("Stage 2: Re-ranked and selected top {} documents", documents.size());
 
             // Add documents for all mentioned NCTIDs (current question + conversation history)
             if (!allNCTIDs.isEmpty()) {
@@ -151,10 +156,10 @@ public class ChatControllerOpenAI {
                     documents.addAll(nctidDocs);
                 }
                 int addedCount = documents.size() - initialSize;
-                LOG.info("➕ Added {} documents for {} NCTIDs mentioned in conversation", addedCount, allNCTIDs.size());
+                LOG.info("Added {} documents for {} NCTIDs mentioned in conversation", addedCount, allNCTIDs.size());
             }
 
-            LOG.info("🔵 OpenAI - Total documents for context: {}", documents.size());
+            LOG.info("OpenAI - Total documents for context: {}", documents.size());
 
             if (documents.isEmpty()) {
                 return new Answer("I don't have information about that topic in my knowledge base.");
@@ -220,7 +225,7 @@ public class ChatControllerOpenAI {
                     .call()
                     .content();
 
-            LOG.info("🔵 OpenAI - Generated response with system message approach using model: {}", configuredModel);
+            LOG.info("OpenAI - Generated response with system message approach using model: {}", configuredModel);
 
             // Extract NCTIDs from AI response and store in session for future questions
             List<String> responseNCTIDs = extractNCTIDs(response);
@@ -234,15 +239,15 @@ public class ChatControllerOpenAI {
                 int afterSize = conversationNCTIDs.size();
                 int newNCTIDs = afterSize - beforeSize;
                 request.getSession().setAttribute("conversationNCTIDs", conversationNCTIDs);
-                LOG.info("💾 Found {} NCTID mentions in response, {} unique NCTIDs total in conversation ({} new)",
+                LOG.info("Found {} NCTID mentions in response, {} unique NCTIDs total in conversation ({} new)",
                          responseNCTIDs.size(), conversationNCTIDs.size(), newNCTIDs);
-                LOG.debug("💾 Session NCTIDs: {}", conversationNCTIDs);
+                LOG.debug("Session NCTIDs: {}", conversationNCTIDs);
             }
 
             return new Answer(response);
 
         } catch (Exception e) {
-            LOG.error("❌ OpenAI - Error generating response with model {}: {}", configuredModel, e.getMessage(), e);
+            LOG.error("OpenAI - Error generating response with model {}: {}", configuredModel, e.getMessage(), e);
             return new Answer("OpenAI Error: " + e.getMessage());
         }
     }
@@ -252,19 +257,19 @@ public class ChatControllerOpenAI {
             Authentication user,
             HttpServletRequest request) {
 
-        LOG.info("🔄 OpenAI - Reset chat memory requested");
+        LOG.info("OpenAI - Reset chat memory requested");
         try {
             String oldId = getOrCreateConversationId(user, request);
             chatMemory.clear(oldId);
-            LOG.info("✅ OpenAI - Cleared memory for conversation ID: {}", oldId);
+            LOG.info("OpenAI - Cleared memory for conversation ID: {}", oldId);
 
             request.getSession().removeAttribute("openai_conversation_id");
             request.getSession().removeAttribute("conversationNCTIDs");
-            LOG.info("✅ OpenAI - Cleared session NCTIDs");
+            LOG.info("OpenAI - Cleared session NCTIDs");
 
             String newId = "reset_" + System.currentTimeMillis();
             request.getSession().setAttribute("openai_conversation_id", newId);
-            LOG.info("✅ OpenAI - Started new conversation with ID: {}", newId);
+            LOG.info("OpenAI - Started new conversation with ID: {}", newId);
 
             InMemoryChatMemory newMemory = new InMemoryChatMemory();
             this.chatMemory = newMemory;
@@ -278,7 +283,7 @@ public class ChatControllerOpenAI {
             return ResponseEntity.ok(resp);
 
         } catch (Exception e) {
-            LOG.error("❌ OpenAI - Error resetting chat memory: {}", e.getMessage(), e);
+            LOG.error("OpenAI - Error resetting chat memory: {}", e.getMessage(), e);
             Map<String, String> resp = new HashMap<>();
             resp.put("status", "error");
             resp.put("message", "Failed to reset chat memory");
@@ -371,7 +376,7 @@ public class ChatControllerOpenAI {
             terms.add(nctMatcher.group().toUpperCase());
         }
 
-        LOG.debug("🔑 Extracted query terms: {}", terms);
+        LOG.debug("Extracted query terms: {}", terms);
         return terms;
     }
 
@@ -382,7 +387,7 @@ public class ChatControllerOpenAI {
         Set<String> queryTerms = extractQueryTerms(query);
 
         if (queryTerms.isEmpty()) {
-            LOG.warn("⚠️ No query terms extracted, returning original order");
+            LOG.warn("No query terms extracted, returning original order");
             return candidates;
         }
 
@@ -409,7 +414,7 @@ public class ChatControllerOpenAI {
                 .collect(java.util.stream.Collectors.toList());
 
         // Log top 10 for debugging
-        LOG.info("🎯 Re-ranking results (top 10):");
+        LOG.info("Re-ranking results (top 10):");
         for (int i = 0; i < Math.min(10, scoredDocs.size()); i++) {
             ScoredDocument sd = scoredDocs.get(i);
             LOG.info("  {}. {} - Final: {}, Semantic: {}, Keyword: {}/{} = {}",
@@ -443,6 +448,50 @@ public class ChatControllerOpenAI {
             this.semanticScore = semanticScore;
             this.keywordScore = keywordScore;
             this.matchCount = matchCount;
+        }
+    }
+
+    /**
+     * reCAPTCHA v3 verification endpoint
+     * Called by verify.jsp to verify the token with Google
+     */
+    @PostMapping("/verify-recaptcha")
+    public ResponseEntity<Map<String, Object>> verifyRecaptcha(
+            @RequestBody Map<String, String> request,
+            HttpSession session) {
+
+        LOG.info("Received reCAPTCHA verification request");
+
+        String token = request.get("token");
+
+        if (token == null || token.trim().isEmpty()) {
+            LOG.error("No token provided in verification request");
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", "No verification token provided");
+            return ResponseEntity.badRequest().body(result);
+        }
+
+        // Call RecaptchaService to verify with Google
+        RecaptchaService.RecaptchaResponse response = recaptchaService.verifyToken(token);
+
+        Map<String, Object> result = new HashMap<>();
+
+        if (response.isSuccess()) {
+            // SET SESSION ATTRIBUTE - marks user as verified
+            session.setAttribute("recaptcha_verified", true);
+            LOG.info("reCAPTCHA verification successful - Session marked as verified");
+
+            result.put("success", true);
+            result.put("message", "Verification successful");
+            result.put("score", response.getScore());
+            return ResponseEntity.ok(result);
+        } else {
+            LOG.warn("reCAPTCHA verification failed: {}", response.getMessage());
+            result.put("success", false);
+            result.put("message", response.getMessage());
+            result.put("score", response.getScore());
+            return ResponseEntity.ok(result);
         }
     }
 }
