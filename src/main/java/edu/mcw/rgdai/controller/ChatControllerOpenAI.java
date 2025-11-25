@@ -102,7 +102,7 @@ public class ChatControllerOpenAI {
         LOG.info("Using conversation ID: {}", conversationId);
 
         if (isGreeting(question.getQuestion())) {
-            return new Answer("Hello! I'm the OpenAI version. I can help you with questions about the documents in my knowledge base. What would you like to know?");
+            return new Answer("Hello! I'm the SCGE AI Assistant. I can help you with questions about the documents in my knowledge base. What would you like to know?");
         }
 
         try {

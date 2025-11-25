@@ -109,7 +109,7 @@
                 window.location.href = contextPath + '/chat-verified';
             } else {
                 console.error('Verification failed:', data.message);
-                showError('You may be using automated tools. Please try again later.');
+                showError('Our system has detected potential automated activity. Please try again later. If the issue persists, contact us at scge_platform@mcw.edu');
             }
         })
         .catch(error => {
