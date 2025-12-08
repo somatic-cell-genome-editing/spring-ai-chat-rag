@@ -32,7 +32,7 @@ const convertNCTToLinks = (text) => {
     const nctPattern = /\b(NCT\d{8})\b/g;
 
     return text.replace(nctPattern, (match, nctId) => {
-        const url = `https://scge.mcw.edu/platform/data/clinicalTrials/report/${nctId}`;
+        const url = `https://scge.mcw.edu/platform/data/report/clinicalTrials/${nctId}`;
         return `<a href="${url}" target="_blank">${nctId}</a>`;
     });
 };
