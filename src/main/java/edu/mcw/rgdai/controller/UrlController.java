@@ -141,7 +141,7 @@ public class UrlController {
                     }
 
                     nctId = nctId.trim();
-                    String url = "https://scge.mcw.edu/platform/data/report/clinicalTrials" + nctId;
+                    String url = "https://scge.mcw.edu/platform/data/report/clinicalTrials/" + nctId;
 
                     LOG.info("Processing trial: {}", nctId);
 
