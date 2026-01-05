@@ -40,8 +40,9 @@ const convertNCTToLinks = (text) => {
 // Function to convert .md filenames to clickable PDF links
 const convertMdToLinks = (text) => {
     // Pattern to match filenames ending with .md
-    // Matches: word characters, spaces, hyphens, underscores, and other common filename chars followed by .md
-    const mdPattern = /([A-Za-z0-9_\-\s\(\)\.]+\.md)\b/g;
+    // Matches: letters, numbers, underscores, hyphens, parentheses, dots followed by .md
+    // NO spaces allowed - prevents matching regular sentence text
+    const mdPattern = /\b([A-Za-z0-9][A-Za-z0-9_\-\(\)\.]*\.md)\b/g;
 
     return text.replace(mdPattern, (match, filename) => {
         // Trim leading/trailing spaces from filename
