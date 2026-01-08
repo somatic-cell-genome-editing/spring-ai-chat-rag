@@ -45,7 +45,7 @@ public class ChatControllerOpenAI {
     private final ChatModel openAiChatModel;
     private final DocumentEmbeddingOpenAIRepository repository;
     private final RecaptchaService recaptchaService;
-    private static final String CHAT_MEMORY_CONVERSATION_ID_KEY = "conversationId";
+    private static final String CHAT_MEMORY_CONVERSATION_ID_KEY = "chat_memory_conversation_id";
 
     public ChatControllerOpenAI(
             ApplicationContext context,
@@ -270,10 +270,6 @@ public class ChatControllerOpenAI {
             String newId = "reset_" + System.currentTimeMillis();
             request.getSession().setAttribute("openai_conversation_id", newId);
             LOG.info("OpenAI - Started new conversation with ID: {}", newId);
-
-            InMemoryChatMemory newMemory = new InMemoryChatMemory();
-            this.chatMemory = newMemory;
-            this.chatClient = buildClient(this.openAiChatModel, newMemory);
 
             Map<String, String> resp = new HashMap<>();
             resp.put("status", "success");
