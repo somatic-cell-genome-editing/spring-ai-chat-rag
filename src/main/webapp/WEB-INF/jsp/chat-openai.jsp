@@ -74,6 +74,8 @@
             color: #28a745;
         }
     </style>
+    <!-- Markdown parser for AI responses -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
         var username = "<%= username %>";
         var contextPath = "<%= contextPath %>";

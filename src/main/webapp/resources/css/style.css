@@ -148,7 +148,7 @@ body {
     margin-bottom: 15px;
     padding: 12px 16px;
     border-radius: 4px;
-    line-height: 1.6;
+    line-height: 1.5;
 }
 
 .UserEntry {
@@ -164,10 +164,24 @@ body {
     max-width: 100%;
 }
 
-/* Sources Used formatting */
-.AIEntry strong {
+/* Reduce spacing in AI response markdown */
+.AIEntry p {
+    margin: 0.3em 0;
+}
+
+.AIEntry ul, .AIEntry ol {
+    margin: 0.3em 0;
+    padding-left: 1.5em;
+}
+
+.AIEntry li {
+    margin: 0.15em 0;
+}
+
+/* Sources Used label formatting */
+.AIEntry .sources-label {
     display: inline-block;
-    margin-top: 0.45em;
+    margin-top: 0.7em;
 }
 
 .SystemEntry {

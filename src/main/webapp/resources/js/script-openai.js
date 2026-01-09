@@ -18,13 +18,14 @@ const handleResponse = (response) => {
     // Hide typing indicator
     hideTypingIndicator();
 
-    // Convert NCT IDs and .md filenames to links before adding to transcript
-    let enhancedAnswer = convertNCTToLinks(response.answer);
+    // Convert markdown to HTML first (handles **bold**, lists, line breaks, etc.)
+    let enhancedAnswer = marked.parse(response.answer);
+
+    enhancedAnswer = convertNCTToLinks(enhancedAnswer);
     enhancedAnswer = convertMdToLinks(enhancedAnswer);
     enhancedAnswer = boldSourcesUsed(enhancedAnswer);
     enhancedAnswer = cleanupClinicalTrialSources(enhancedAnswer);
     addToTranscript("AI", enhancedAnswer);
-    // addToTranscript("AI", response.answer);
 };
 // Function to convert NCT IDs to clickable links
 const convertNCTToLinks = (text) => {
@@ -74,8 +75,8 @@ const convertMdToLinks = (text) => {
 const boldSourcesUsed = (text) => {
     // Add line break before SOURCES_USED if it's not already on its own line
     // Also add spaces after commas in the sources list
-    return text.replace(/([^\n])\s*SOURCES_USED:\s*/g, '$1<br><strong>SOURCES USED:</strong> ')
-               .replace(/SOURCES_USED:\s*/g, '<strong>SOURCES USED:</strong> ')
+    return text.replace(/([^\n])\s*SOURCES_USED:\s*/g, '$1<strong class="sources-label">SOURCES USED:</strong> ')
+               .replace(/SOURCES_USED:\s*/g, '<strong class="sources-label">SOURCES USED:</strong> ')
                .replace(/,(?=\S)/g, ', '); // Add space after comma if there isn't one
 };
 
