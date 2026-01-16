@@ -156,7 +156,7 @@
         </div>
         <%}%>
         <div class="input-area">
-            <textarea id="userInput" placeholder="Ask AI a question about fda documents..." rows="3"></textarea>
+            <textarea id="userInput" placeholder="Ask AI a question about fda documents or gene therapy clinical trials..." rows="3"></textarea>
             <button id="typedTextSubmit" class="submit-btn">Send</button>
         </div>
     </div>

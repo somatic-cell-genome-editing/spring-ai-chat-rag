@@ -180,6 +180,7 @@ public class ChatControllerOpenAI {
             }
             String systemMessage = String.format("""
         Answer using the context below OR conversation history. Do NOT use external knowledge about general topics, mountains, etc.
+        If a question is about a topic completely unrelated to the subject matter in the provided context (e.g., entertainment, sports, geography), politely decline and use "SOURCES_USED: None". Do not offer to discuss such topics further.
         When asked about "last question" or "previous question", refer to the most recent user message in the conversation.
         IMPORTANT: When asked about "last question" or "previous question", only refer to questions YOU were asked in THIS conversation, not questions mentioned in the document context.
 
