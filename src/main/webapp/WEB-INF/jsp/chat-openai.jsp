@@ -134,6 +134,16 @@
             </div>
         </div>
 
+        <div id="disclaimer">
+            <div id="disclaimerHeader">
+                <span class="disclaimer-arrow">&#9660;</span>
+                <strong>Disclaimer</strong>
+            </div>
+            <div id="disclaimerContent">
+                This AI chatbot has a library of knowledge limited to FDA guidance documents and gene therapy trial information updated regularly from <a href="https://clinicaltrials.gov" target="_blank">clinicaltrials.gov</a>. It's answers are restricted to these topics. Regulatory advice should be confirmed with a licensed regulatory consultant or with FDA. Nothing communicated by this chatbot should be interpreted as medical advice or replaces the advice of your doctor.
+            </div>
+        </div>
+
         <div id="transcript"></div>
         <div class="start-over-section">
             <button id="startOverBtn" class="start-over-btn">Start over</button>

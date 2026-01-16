@@ -359,5 +359,18 @@ const initUIEvents = () => {
     startOverBtn.addEventListener('click',startOverChat);
 };
 
+// Disclaimer toggle
+const initDisclaimer = () => {
+    const disclaimer = document.getElementById('disclaimer');
+    const disclaimerHeader = document.getElementById('disclaimerHeader');
+
+    disclaimerHeader.addEventListener('click', () => {
+        disclaimer.classList.toggle('collapsed');
+    });
+};
+
 // Initialize everything when DOM is loaded
-window.addEventListener('load', initUIEvents);
+window.addEventListener('load', () => {
+    initUIEvents();
+    initDisclaimer();
+});
