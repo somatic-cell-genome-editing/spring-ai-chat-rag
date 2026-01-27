@@ -353,7 +353,7 @@ const initUIEvents = () => {
     }
 
     // Welcome message
-    addToTranscript("System", "Welcome to SCGE Platform AI Assistant! Ask questions about the fda documents, clinical trials etc.");
+    addToTranscript("SCGE", "Welcome to SCGE Platform AI Assistant! I can answer questions about FDA guidance documents or gene therapy clinical trials.");
 
     const startOverBtn = document.getElementById('startOverBtn');
     startOverBtn.addEventListener('click',startOverChat);

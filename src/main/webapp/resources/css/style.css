@@ -191,7 +191,7 @@ body {
     background-color: #fafafa;
 }
 
-.UserEntry, .AIEntry, .SystemEntry {
+.UserEntry, .AIEntry, .SCGEEntry {
     margin-bottom: 15px;
     padding: 12px 16px;
     border-radius: 4px;
@@ -231,7 +231,7 @@ body {
     margin-top: 0.7em;
 }
 
-.SystemEntry {
+.SCGEEntry {
     background-color: #f5f5f5;
     border-left: 3px solid #999;
     font-size: 14px;

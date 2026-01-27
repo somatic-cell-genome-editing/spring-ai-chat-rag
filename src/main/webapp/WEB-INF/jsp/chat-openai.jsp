@@ -126,12 +126,12 @@
                 <a href="<%= contextPath %>/" target="_blank">Switch to Ollama</a>
             </div>
             <%}%>
-            <div class="user-info">
-                Welcome, <%= username %>!
-                <%--                <form action="<%= contextPath %>/logout" method="post" style="display: inline;">--%>
-                <%--                    <input type="submit" value="Logout" class="logout-btn"/>--%>
-                <%--                </form>--%>
-            </div>
+<%--            <div class="user-info">--%>
+<%--                Welcome, <%= username %>!--%>
+<%--                &lt;%&ndash;                <form action="<%= contextPath %>/logout" method="post" style="display: inline;">&ndash;%&gt;--%>
+<%--                &lt;%&ndash;                    <input type="submit" value="Logout" class="logout-btn"/>&ndash;%&gt;--%>
+<%--                &lt;%&ndash;                </form>&ndash;%&gt;--%>
+<%--            </div>--%>
         </div>
 
         <div id="disclaimer">
@@ -146,7 +146,7 @@
 
         <div id="transcript"></div>
         <div class="start-over-section">
-            <button id="startOverBtn" class="start-over-btn">Start over</button>
+            <button id="startOverBtn" class="start-over-btn">Clear memory</button>
         </div>
         <%if((request.getServerName().equals("localhost"))){%>
         <div id="controls">
@@ -156,7 +156,7 @@
         </div>
         <%}%>
         <div class="input-area">
-            <textarea id="userInput" placeholder="Ask AI a question about fda documents or gene therapy clinical trials..." rows="3"></textarea>
+            <textarea id="userInput" placeholder="Ask a question..." rows="3"></textarea>
             <button id="typedTextSubmit" class="submit-btn">Send</button>
         </div>
     </div>
