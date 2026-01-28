@@ -132,9 +132,9 @@
     <!-- Chat Area -->
     <div id="chatArea">
         <div id="header">
-            <a href="<%= chatPlatformBase %>/platform/home">
-                <img src="<%= chatPlatformBase %>/platform/common/images/SCGE_Platform_logo_5.jpg" alt="SCGE Platform Logo" class="header-logo"/>
-            </a>
+<%--            <a href="<%= chatPlatformBase %>/platform/home">--%>
+<%--                <img src="<%= chatPlatformBase %>/platform/common/images/SCGE_Platform_logo_5.jpg" alt="SCGE Platform Logo" class="header-logo"/>--%>
+<%--            </a>--%>
             <h2>SCGE Platform AI Assistant</h2>
             <%if((request.getServerName().equals("localhost") )){%>
 <%--            <div class="model-switch">--%>

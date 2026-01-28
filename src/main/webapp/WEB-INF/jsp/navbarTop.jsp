@@ -1,8 +1,8 @@
 <%@ page import="java.util.Map" %>
 
 <%
-    Map userAttributes = (Map) request.getSession().getAttribute("userAttributes");;
-
+    Map userAttributes = (Map) request.getSession().getAttribute("userAttributes");
+    String platformBase1 = request.getServerName().equals("localhost") ? "https://dev.scge.mcw.edu" : "";
 %>
 
 <nav class="navbar navbar-expand-lg navbar-dark justify-content-end navbar-top" style="background-color: rgb(27, 128, 182)">
@@ -26,6 +26,8 @@
 
             </ul>
             <ul class="navbar-nav ml-auto justify-content-end">
+                <li class="nav-item text-nowrap"><a class="nav-link" href="<%= platformBase1 %>/platform/home">SCGE Platform Home</a></li>
+                <li class="nav-item text-nowrap"><a class="nav-link" href="https://scge.mcw.edu">SCGE Consortium Home</a></li>
                 <li class="nav-item text-nowrap"><a class="nav-link" href="https://scge.mcw.edu">SCGE Consortium Home</a></li>
                 <li class="nav-item text-nowrap"><a class="nav-link" href="https://scge.mcw.edu/phase-2-tcdc/">About SCGE TCDC</a></li>
                 <li class="nav-item text-nowrap"><a class="nav-link" href="https://scge.mcw.edu/contact/">Contact Us</a></li>

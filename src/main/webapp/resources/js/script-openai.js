@@ -157,12 +157,12 @@ const processUrl = (url) => {
         .then(data => {
             document.getElementById("urlLoader").style.visibility = "hidden";
             document.getElementById("urlModal").style.display = "none";
-            addToTranscript("System", `Processed URL: ${data.url} (${data.chunkCount} chunks extracted from "${data.title}")`);
+            addToTranscript("SCGE", `Processed URL: ${data.url} (${data.chunkCount} chunks extracted from "${data.title}")`);
         })
         .catch(error => {
             console.error('Error processing URL:', error);
             document.getElementById("urlLoader").style.visibility = "hidden";
-            addToTranscript("System", `Error processing URL: ${error.message}`);
+            addToTranscript("SCGE", `Error processing URL: ${error.message}`);
         });
 };
 
@@ -197,19 +197,19 @@ const startOverChat = () => {
             .then(res => res.json())
             .then(data => {
                 if (data.status === "success") {
-                    addToTranscript("System", "Chat memory cleared - starting fresh conversation");
+                    addToTranscript("SCGE", "Chat memory cleared - starting fresh conversation");
                 } else {
-                    addToTranscript("System", "Error: " + data.message);
+                    addToTranscript("SCGE", "Error: " + data.message);
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                addToTranscript("System", "Error clearing chat memory");
+                addToTranscript("SCGE", "Error clearing chat memory");
             })
             .finally(() => {
                 // Re-enable button
                 startOverBtn.disabled = false;
-                startOverBtn.textContent = "Start over";
+                startOverBtn.textContent = "Clear memory";
             });
     }
 };
@@ -301,7 +301,7 @@ const initUIEvents = () => {
                 const fileName = json.fileName;
                 document.getElementById("loader").style.visibility = "hidden";
                 modal.style.display = "none";
-                addToTranscript("System", `Uploaded file: ${fileName} (${json.fileSize} bytes) to OpenAI vector store`);
+                addToTranscript("SCGE", `Uploaded file: ${fileName} (${json.fileSize} bytes) to OpenAI vector store`);
                 uploadForm.reset();
             }
         } catch (e) {
@@ -315,7 +315,7 @@ const initUIEvents = () => {
                 loadTrialsBtn.disabled = true;
                 loadTrialsBtn.textContent = "Loading Trials...";
 
-                addToTranscript("System", "Starting clinical trials loading process...");
+                addToTranscript("SCGE", "Starting clinical trials loading process...");
 
                 fetch(contextPath + "/load-clinical-trials", {
                     method: "POST",
@@ -326,7 +326,7 @@ const initUIEvents = () => {
                     .then(res => res.json())
                     .then(data => {
                         if (data.error) {
-                            addToTranscript("System", `Error: ${data.error}`);
+                            addToTranscript("SCGE", `Error: ${data.error}`);
                         } else {
                             const message = `Clinical trials loading complete!\n` +
                                 `Total: ${data.total}\n` +
@@ -334,16 +334,16 @@ const initUIEvents = () => {
                                 `Overwritten: ${data.overwritten}\n` +
                                 `Failed: ${data.failed}`;
 
-                            addToTranscript("System", message);
+                            addToTranscript("SCGE", message);
 
                             if (data.failedList && data.failedList.length > 0) {
-                                addToTranscript("System", `Failed trials: ${data.failedList.join(', ')}`);
+                                addToTranscript("SCGE", `Failed trials: ${data.failedList.join(', ')}`);
                             }
                         }
                     })
                     .catch(error => {
                         console.error('Error loading clinical trials:', error);
-                        addToTranscript("System", "Error loading clinical trials: " + error.message);
+                        addToTranscript("SCGE", "Error loading clinical trials: " + error.message);
                     })
                     .finally(() => {
                         loadTrialsBtn.disabled = false;
