@@ -12,6 +12,18 @@
         String username = "User";
         String contextPath = request.getContextPath();
     %>
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css" integrity="sha384-xOolHFLEh07PJGoPkLv1IbcEPTNtaed2xpHsD9ESMhqIYd0nLMwNLD69Npy4HI+N" crossorigin="anonymous">
+    <!-- jQuery and Popper.js for Bootstrap -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js" integrity="sha384-9/reFTGAW83EW2RDu2S0VKaIzap3H66lZH81PoYlFhbGU+6BZp6G7niu735Sk7lN" crossorigin="anonymous"></script>
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css" rel="stylesheet" type="text/css"/>
+    <!-- CSS from platform -->
+    <%
+        String chatPlatformBase = request.getServerName().equals("localhost") ? "https://dev.scge.mcw.edu" : "";
+    %>
+    <link href="<%= chatPlatformBase %>/platform/css/navbarTop.css" rel="stylesheet" type="text/css"/>
     <link rel="stylesheet" href="<%= contextPath %>/resources/css/style.css"/>
     <style>
         /* OpenAI-specific styling */
@@ -83,6 +95,7 @@
     <script src="<%= contextPath %>/resources/js/script-openai.js"></script>
 </head>
 <body>
+<%@include file="navbarTop.jsp"%>
 <div class="chat-container">
     <!-- Upload Modal -->
     <div id="uploadModal" class="modal">
@@ -119,12 +132,14 @@
     <!-- Chat Area -->
     <div id="chatArea">
         <div id="header">
-<%--            <h2>AI Chat Demo <span class="openai-badge">OpenAI</span></h2>--%>
+            <a href="<%= chatPlatformBase %>/platform/home">
+                <img src="<%= chatPlatformBase %>/platform/common/images/SCGE_Platform_logo_5.jpg" alt="SCGE Platform Logo" class="header-logo"/>
+            </a>
             <h2>SCGE Platform AI Assistant</h2>
             <%if((request.getServerName().equals("localhost") )){%>
-            <div class="model-switch">
-                <a href="<%= contextPath %>/" target="_blank">Switch to Ollama</a>
-            </div>
+<%--            <div class="model-switch">--%>
+<%--                <a href="<%= contextPath %>/" target="_blank">Switch to Ollama</a>--%>
+<%--            </div>--%>
             <%}%>
 <%--            <div class="user-info">--%>
 <%--                Welcome, <%= username %>!--%>
@@ -161,5 +176,7 @@
         </div>
     </div>
 </div>
+<br>
+<%@include file="footer.jsp"%>
 </body>
 </html>
