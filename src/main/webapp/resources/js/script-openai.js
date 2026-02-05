@@ -1,8 +1,19 @@
 const addToTranscript = (who, text) => {
     const transcript = document.querySelector('#transcript');
     const name = (who === "User") ? username : who;
-    transcript.innerHTML += createTranscriptEntry(who, name, text);
-    transcript.scrollTop = transcript.scrollHeight;
+
+    // Create the new entry element
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = createTranscriptEntry(who, name, text);
+    const newEntry = tempDiv.firstElementChild;
+
+    // Append the new entry
+    transcript.appendChild(newEntry);
+
+    // Only scroll to beginning of AI responses (within transcript container only)
+    if (who === "AI") {
+        transcript.scrollTop = newEntry.offsetTop - transcript.offsetTop;
+    }
 };
 
 const createTranscriptEntry = (who, name, text) => {
