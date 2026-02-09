@@ -49,12 +49,11 @@ const convertNCTToLinks = (text) => {
     });
 };
 
-// Function to convert .md filenames to clickable PDF links
+// Function to convert [[filename.md]] markers to clickable PDF links
 const convertMdToLinks = (text) => {
-    // Pattern to match filenames ending with .md
-    // Matches: letters, numbers, underscores, hyphens, parentheses, dots followed by .md
-    // NO spaces allowed - prevents matching regular sentence text
-    const mdPattern = /\b([A-Za-z0-9][A-Za-z0-9_\-\(\)\.]*\.md)\b/g;
+    // Pattern to match [[filename.md]] markers from backend
+    // Supports filenames with spaces, parentheses, hyphens, etc.
+    const mdPattern = /\[\[([^\]]+\.md)\]\]/g;
 
     return text.replace(mdPattern, (match, filename) => {
         // Trim leading/trailing spaces from filename

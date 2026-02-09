@@ -170,11 +170,16 @@ public class ChatControllerOpenAI {
 //                contextBuilder.append(doc.getContent()).append("\n\n");
 //            }
             StringBuilder contextBuilder = new StringBuilder();
+            Set<String> usedFilenames = new HashSet<>();
             for (Document doc : documents) {
                 String filename = doc.getMetadata().getOrDefault("filename", "unknown").toString();
                 // Extract just the NCT ID if filename starts with NCT and contains a colon
                 if (filename.startsWith("NCT") && filename.contains(":")) {
                     filename = filename.split(":")[0];
+                }
+                // Collect filenames for post-processing (exclude NCT IDs and unknown)
+                if (!filename.equals("unknown") && !filename.startsWith("NCT")) {
+                    usedFilenames.add(filename);
                 }
                 contextBuilder.append(String.format("--- FROM: %s ---\n%s\n\n", filename, doc.getContent()));
             }
@@ -310,6 +315,9 @@ public class ChatControllerOpenAI {
                     .content();
 
             LOG.info("OpenAI - Generated response with system message approach using model: {}", configuredModel);
+
+            // Post-process response to wrap filenames with [[...]] markers for frontend linking
+            response = wrapFilenamesInResponse(response, usedFilenames);
 
             // Extract NCTIDs from AI response and store in session for future questions
             List<String> responseNCTIDs = extractNCTIDs(response);
@@ -529,6 +537,108 @@ public class ChatControllerOpenAI {
             this.keywordScore = keywordScore;
             this.matchCount = matchCount;
         }
+    }
+
+    /**
+     * Wrap filenames in response with [[...]] markers for frontend linking.
+     * Uses comprehensive normalization to handle all AI filename variations:
+     * - Spaces removed, replaced with hyphens, or replaced with underscores
+     * - Case differences
+     * - Mixed patterns
+     */
+    private String wrapFilenamesInResponse(String response, Set<String> usedFilenames) {
+        if (response == null || usedFilenames == null || usedFilenames.isEmpty()) {
+            return response;
+        }
+
+        String result = response;
+
+        // Sort filenames by length (longest first) to avoid substring issues
+        List<String> sortedFilenames = usedFilenames.stream()
+                .sorted((a, b) -> Integer.compare(b.length(), a.length()))
+                .collect(java.util.stream.Collectors.toList());
+
+        for (String filename : sortedFilenames) {
+            String baseName = filename.endsWith(".md") ? filename.substring(0, filename.length() - 3) : filename;
+            String fullName = filename.endsWith(".md") ? filename : filename + ".md";
+
+            // Skip if already wrapped
+            if (result.contains("[[" + fullName + "]]")) {
+                continue;
+            }
+
+            // Try exact match first: fullName (with .md)
+            if (result.contains(fullName)) {
+                result = result.replace(fullName, "[[" + fullName + "]]");
+                continue;
+            }
+
+            // Try exact match: baseName (without .md)
+            if (!baseName.isEmpty() && result.contains(baseName) && !result.contains("[[" + baseName)) {
+                result = result.replace(baseName, "[[" + fullName + "]]");
+                continue;
+            }
+
+            // Generate all possible variations the AI might use
+            List<String> variations = generateFilenameVariations(baseName);
+
+            boolean matched = false;
+            for (String variation : variations) {
+                if (matched) break;
+
+                String variationFull = variation + ".md";
+
+                // Try with .md
+                if (result.contains(variationFull) && !result.contains("[[" + variationFull)) {
+                    result = result.replace(variationFull, "[[" + fullName + "]]");
+                    matched = true;
+                    break;
+                }
+                // Try without .md
+                if (result.contains(variation) && !result.contains("[[" + variation)) {
+                    result = result.replace(variation, "[[" + fullName + "]]");
+                    matched = true;
+                    break;
+                }
+            }
+        }
+
+        LOG.debug("Post-processed response with {} filenames for linking", sortedFilenames.size());
+        return result;
+    }
+
+    /**
+     * Generate all possible variations of a filename that AI might produce.
+     * Handles: spaces removed, spaces→hyphens, spaces→underscores, lowercase, and combinations.
+     */
+    private List<String> generateFilenameVariations(String baseName) {
+        List<String> variations = new ArrayList<>();
+
+        // Compacted (spaces removed)
+        variations.add(baseName.replaceAll("\\s+", ""));
+
+        // Hyphenated (spaces to hyphens)
+        variations.add(baseName.replaceAll("\\s+", "-"));
+
+        // Underscored (spaces to underscores)
+        variations.add(baseName.replaceAll("\\s+", "_"));
+
+        // Lowercase versions of all above
+        variations.add(baseName.toLowerCase().replaceAll("\\s+", ""));
+        variations.add(baseName.toLowerCase().replaceAll("\\s+", "-"));
+        variations.add(baseName.toLowerCase().replaceAll("\\s+", "_"));
+        variations.add(baseName.toLowerCase());
+
+        // Normalize all separators to single type (handles mixed patterns)
+        // e.g., "Some-Name_Here" -> "SomeNameHere", "Some-Name-Here", "Some_Name_Here"
+        String normalizedBase = baseName.replaceAll("[\\s_-]+", " ").trim();
+        if (!normalizedBase.equals(baseName)) {
+            variations.add(normalizedBase.replaceAll("\\s+", ""));
+            variations.add(normalizedBase.replaceAll("\\s+", "-"));
+            variations.add(normalizedBase.replaceAll("\\s+", "_"));
+        }
+
+        return variations;
     }
 
     /**
