@@ -24,6 +24,7 @@
         String chatPlatformBase = request.getServerName().equals("localhost") ? "https://dev.scge.mcw.edu" : "";
     %>
     <link href="<%= chatPlatformBase %>/platform/css/navbarTop.css" rel="stylesheet" type="text/css"/>
+    <link href="<%= chatPlatformBase %>/platform/css/base.css" rel="stylesheet" type="text/css"/>
     <link rel="stylesheet" href="<%= contextPath %>/resources/css/style.css"/>
     <style>
         /* OpenAI-specific styling */
@@ -176,6 +177,78 @@
         </div>
     </div>
 </div>
+<!-- Feedback Button and Form -->
+<div class="hiddenBtns" style="display: block;">
+    <button type="button" class="openLikeBtn" onclick="openFeedbackForm()"></button>
+</div>
+<div class="chat-popup" id="feedbackPopup">
+    <form class="form-container">
+        <img src="<%= chatPlatformBase %>/platform/images/close30.png" id="closeFeedback" onclick="closeFeedbackForm()" class="closeForm"/>
+        <h2 id="feedbackHeadMsg">We value your feedback</h2>
+
+        <label><b>Your email</b></label>
+        <br><input type="email" id="feedbackEmail">
+        <br>
+        <br><label><b>Message</b></label>
+        <textarea placeholder="Type message.." id="feedbackMessage"></textarea>
+
+        <button type="button" id="feedbackSendBtn" class="btn" onclick="sendFeedback()">Send</button>
+    </form>
+</div>
+
+<script>
+    function openFeedbackForm() {
+        document.getElementById("feedbackPopup").style.display = "block";
+    }
+
+    function closeFeedbackForm() {
+        document.getElementById("feedbackPopup").style.display = "none";
+        document.getElementById("feedbackSendBtn").disabled = false;
+    }
+
+    function sendFeedback() {
+        var email = document.getElementById("feedbackEmail").value;
+        var message = document.getElementById("feedbackMessage").value;
+
+        if (!message) {
+            alert("There is no message entered.");
+            return;
+        }
+        if (!email) {
+            alert("No email provided.");
+            return;
+        }
+        var re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!re.test(email)) {
+            alert("Not a valid email address.");
+            return;
+        }
+        document.getElementById("feedbackSendBtn").disabled = true;
+
+        $.ajax({
+            url: '<%= chatPlatformBase %>/platform/data/feedback',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                email: email,
+                message: message,
+                webPage: window.location.href
+            }),
+            success: function() {
+                closeFeedbackForm();
+                document.getElementById("feedbackEmail").value = "";
+                document.getElementById("feedbackMessage").value = "";
+                alert("Thank you! Your message has been sent to the SCGE.");
+            },
+            error: function(err) {
+                console.log("Feedback error:", err);
+                alert("Failed to send feedback. Please try again.");
+                document.getElementById("feedbackSendBtn").disabled = false;
+            }
+        });
+    }
+</script>
+
 <br>
 <%@include file="footer.jsp"%>
 </body>
