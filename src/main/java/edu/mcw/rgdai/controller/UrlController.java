@@ -69,7 +69,7 @@ public class UrlController {
 
         try {
             // Get NCT IDs from CurDS database using custom datasource
-            DataSource curationDS = DataSourceFactory.getInstance().getScgePlatformCurDataSource();
+            DataSource curationDS = DataSourceFactory.getInstance().getScgePlatformDataSource();
             ClinicalTrailDAO dao = new ClinicalTrailDAO(curationDS);
             List<String> nctIds = dao.getAllNctIds();
             LOG.info("Retrieved {} NCT IDs from CurDS database", nctIds.size());
