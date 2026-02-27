@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import jakarta.servlet.http.HttpServletRequest;
 import javax.sql.DataSource;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -64,7 +65,7 @@ public class UrlController {
     }
 
     @PostMapping("/load-clinical-trials")
-    public ResponseEntity<?> loadClinicalTrials() {
+    public ResponseEntity<?> loadClinicalTrials(HttpServletRequest request) {
         LOG.info("Starting clinical trials loading process");
 
         try {
@@ -141,7 +142,9 @@ public class UrlController {
                     }
 
                     nctId = nctId.trim();
-                    String url = "https://stage.scge.mcw.edu/platform/data/report/clinicalTrials/" + nctId;
+                    String serverName = request.getServerName();
+                    String baseUrl = serverName.contains("stage") ? "https://stage.scge.mcw.edu" : "https://scge.mcw.edu";
+                    String url = baseUrl + "/platform/data/report/clinicalTrials/" + nctId;
 
                     LOG.info("Processing trial: {}", nctId);
 
