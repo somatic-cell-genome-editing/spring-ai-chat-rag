@@ -37,6 +37,7 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 public class ChatControllerOpenAI {
 
     private static final Logger LOG = LoggerFactory.getLogger(ChatControllerOpenAI.class);
+    private static final Logger TIMING_LOG = LoggerFactory.getLogger("TIMING");
 
     private ChatClient chatClient;
     private final VectorStore openaiVectorStore;
@@ -95,6 +96,7 @@ public class ChatControllerOpenAI {
                        Authentication user,
                        HttpServletRequest request) {
 
+        long t0 = System.currentTimeMillis();
         LOG.info("OpenAI - Received question: {}", question.getQuestion());
         LOG.info("Processing with model: {}", configuredModel);
 
@@ -120,6 +122,7 @@ public class ChatControllerOpenAI {
             if (!allNCTIDs.isEmpty()) {
                 LOG.info("Found {} unique NCTIDs in conversation (current + session): {}", allNCTIDs.size(), allNCTIDs);
             }
+            long t1 = System.currentTimeMillis();
 
             // STAGE 1: Broad retrieval - Get top 80 candidates from semantic search WITH SCORES
             List<Document> candidates;
@@ -137,6 +140,7 @@ public class ChatControllerOpenAI {
                                 .withTopK(80)
                                 .withSimilarityThreshold(0.35));
             }
+            long t2 = System.currentTimeMillis();
             LOG.info("Stage 1: Retrieved {} candidates from semantic similarity search", candidates.size());
 
             // STAGE 2: Re-rank using semantic + keyword scoring
@@ -146,6 +150,7 @@ public class ChatControllerOpenAI {
             if (documents.size() > 40) {
                 documents = documents.subList(0, 40);
             }
+            long t3 = System.currentTimeMillis();
             LOG.info("Stage 2: Re-ranked and selected top {} documents", documents.size());
 
             // Add documents for all mentioned NCTIDs (current question + conversation history)
@@ -159,6 +164,7 @@ public class ChatControllerOpenAI {
                 LOG.info("Added {} documents for {} NCTIDs mentioned in conversation", addedCount, allNCTIDs.size());
             }
 
+            long t4 = System.currentTimeMillis();
             LOG.info("OpenAI - Total documents for context: {}", documents.size());
 
             if (documents.isEmpty()) {
@@ -289,6 +295,7 @@ public class ChatControllerOpenAI {
         - If no files were used, write exactly:
           SOURCES_USED: None
         """, contextBuilder);
+            long t5 = System.currentTimeMillis();
 
 //            String systemMessage = String.format("""
 //                    Answer using the context below OR conversation history. Do NOT use external knowledge about general topics, mountains, etc.
@@ -314,6 +321,7 @@ public class ChatControllerOpenAI {
                     .call()
                     .content();
 
+            long t6 = System.currentTimeMillis();
             LOG.info("OpenAI - Generated response with system message approach using model: {}", configuredModel);
 
             // Post-process response to wrap filenames with [[...]] markers for frontend linking
@@ -335,6 +343,29 @@ public class ChatControllerOpenAI {
                          responseNCTIDs.size(), conversationNCTIDs.size(), newNCTIDs);
                 LOG.debug("Session NCTIDs: {}", conversationNCTIDs);
             }
+
+            long t7 = System.currentTimeMillis();
+
+            // Log timing summary
+            long total = t7 - t0;
+            long nctidExtract = t1 - t0;
+            long vectorSearch = t2 - t1;
+            long rerank = t3 - t2;
+            long nctidLookup = t4 - t3;
+            long contextBuild = t5 - t4;
+            long openaiApi = t6 - t5;
+            long postProcess = t7 - t6;
+
+            TIMING_LOG.info("TIMING: [Q: \"{}\"]", question.getQuestion());
+            TIMING_LOG.info("  NCTID Extraction:    {}ms ({}s)", nctidExtract, String.format("%.2f", nctidExtract / 1000.0));
+            TIMING_LOG.info("  Vector Search:       {}ms ({}s)", vectorSearch, String.format("%.2f", vectorSearch / 1000.0));
+            TIMING_LOG.info("  Re-ranking:          {}ms ({}s)", rerank, String.format("%.2f", rerank / 1000.0));
+            TIMING_LOG.info("  NCTID DB Lookup:     {}ms ({}s)", nctidLookup, String.format("%.2f", nctidLookup / 1000.0));
+            TIMING_LOG.info("  Context Building:    {}ms ({}s)", contextBuild, String.format("%.2f", contextBuild / 1000.0));
+            TIMING_LOG.info("  OpenAI API Call:     {}ms ({}s)", openaiApi, String.format("%.2f", openaiApi / 1000.0));
+            TIMING_LOG.info("  Post-processing:     {}ms ({}s)", postProcess, String.format("%.2f", postProcess / 1000.0));
+            TIMING_LOG.info("  -----------------------------");
+            TIMING_LOG.info("  TOTAL:               {}ms ({}s)", total, String.format("%.2f", total / 1000.0));
 
             return new Answer(response);
 
