@@ -29,9 +29,8 @@ const handleResponse = (response) => {
     // Hide typing indicator
     hideTypingIndicator();
 
-    // Convert markdown to HTML first (handles **bold**, lists, line breaks, etc.)
+    // Same order as dev server: marked first, then links
     let enhancedAnswer = marked.parse(response.answer);
-
     enhancedAnswer = convertNCTToLinks(enhancedAnswer);
     enhancedAnswer = convertMdToLinks(enhancedAnswer);
     enhancedAnswer = boldSourcesUsed(enhancedAnswer);
@@ -92,10 +91,10 @@ const boldSourcesUsed = (text) => {
                .replace(/,(?=\S)/g, ', '); // Add space after comma if there isn't one
 };
 
-// Function to remove "CLINICAL TRIAL:" prefix from sources
+// Function to remove "CLINICAL TRIAL" prefix from sources (handles all AI format variations)
 const cleanupClinicalTrialSources = (text) => {
-    // Remove "CLINICAL TRIAL: " from the sources section
-    return text.replace(/CLINICAL TRIAL:\s*/g, '');
+    // Handles: "CLINICAL TRIAL: ", "CLINICAL-TRIAL_", "CLINICAL-TRIAL:", "CLINICAL_TRIAL_", etc.
+    return text.replace(/CLINICAL[\s_-]*TRIAL[\s_:-]*/gi, '');
 };
 
 // Show typing indicator
@@ -129,6 +128,9 @@ const hideTypingIndicator = () => {
     }
 };
 
+// Streaming toggle - set to false to use the old non-streaming behavior
+const USE_STREAMING = true;
+
 // API Interactions - OpenAI Endpoints
 const postQuestion = (question) => {
     // Show typing indicator
@@ -148,6 +150,116 @@ const postQuestion = (question) => {
             hideTypingIndicator();
             addToTranscript("AI", "Sorry, there was an error processing your request with OpenAI.");
         });
+};
+
+// Streaming version - shows text as it arrives from OpenAI
+const postQuestionStream = (question) => {
+    showTypingIndicator();
+
+    const transcript = document.querySelector('#transcript');
+
+    fetch(contextPath + "/chat-openai/stream", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream"
+        },
+        body: JSON.stringify({ question: question })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+
+        hideTypingIndicator();
+
+        // Create AI entry for streaming text
+        const aiEntry = document.createElement('div');
+        aiEntry.className = 'AIEntry';
+        const contentDiv = document.createElement('div');
+        contentDiv.innerHTML = '<b>AI:</b> ';
+        const streamSpan = document.createElement('span');
+        contentDiv.appendChild(streamSpan);
+        aiEntry.appendChild(contentDiv);
+        transcript.appendChild(aiEntry);
+
+        // Scroll to show the AI entry
+        transcript.scrollTop = aiEntry.offsetTop - transcript.offsetTop;
+
+        // Setup streaming markdown parser
+        const smdRenderer = smd.default_renderer(streamSpan);
+        const smdParser = smd.parser(smdRenderer);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let rawText = '';
+
+        function processStream() {
+            return reader.read().then(({ done, value }) => {
+                if (done) return;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // Split on double newline (SSE event boundary)
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop(); // Keep incomplete part in buffer
+
+                for (const part of parts) {
+                    if (!part.trim()) continue;
+
+                    let eventName = 'message';
+                    let dataLines = [];
+                    const lines = part.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('event:')) {
+                            eventName = line.substring(6).trim();
+                        } else if (line.startsWith('data:')) {
+                            dataLines.push(line.substring(5));
+                        }
+                    }
+                    // Join data lines with newlines (SSE spec: multi-line data)
+                    const eventData = dataLines.join('\n');
+
+                    if (eventName === 'metadata') {
+                        // metadata received, no action needed during streaming
+                    } else if (eventName === 'token') {
+                        rawText += eventData;
+                        // Strip [[, ]], and .md so smd doesn't misinterpret as link syntax
+                        const cleanToken = eventData.replace(/\[\[/g, '').replace(/\.md\]\]/g, '').replace(/\]\]/g, '');
+                        smd.parser_write(smdParser, cleanToken);
+                    } else if (eventName === 'done') {
+                        try { smd.parser_end(smdParser); } catch (e) { /* safe to ignore */ }
+                        try {
+                            const payload = JSON.parse(eventData);
+                            // Same order as dev server: marked first, then links
+                            let enhanced = marked.parse(payload.fullResponse);
+                            enhanced = convertNCTToLinks(enhanced);
+                            enhanced = convertMdToLinks(enhanced);
+                            enhanced = boldSourcesUsed(enhanced);
+                            enhanced = cleanupClinicalTrialSources(enhanced);
+                            streamSpan.innerHTML = enhanced;
+                        } catch (e) {
+                            console.error('Error parsing done payload:', e);
+                        }
+                    } else if (eventName === 'error') {
+                        streamSpan.textContent = 'Sorry, there was an error processing your request.';
+                        console.error('Stream error:', eventData);
+                    }
+                }
+
+                return processStream();
+            });
+        }
+
+        return processStream();
+    })
+    .catch(error => {
+        console.error('Streaming error:', error);
+        hideTypingIndicator();
+        addToTranscript("AI", "Sorry, there was an error processing your request with OpenAI.");
+    });
 };
 
 const processUrl = (url) => {
@@ -188,7 +300,11 @@ const submitTypedText = (event) => {
     }
 
     addToTranscript("User", typedText);
-    postQuestion(typedText);
+    if (USE_STREAMING) {
+        postQuestionStream(typedText);
+    } else {
+        postQuestion(typedText);
+    }
     typedTextInput.value = '';
     return false;
 };

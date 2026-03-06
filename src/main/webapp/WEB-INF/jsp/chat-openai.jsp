@@ -89,11 +89,16 @@
     </style>
     <!-- Markdown parser for AI responses -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Streaming markdown parser for live AI streaming (ES module → global) -->
+    <script type="module">
+        import * as smd from 'https://cdn.jsdelivr.net/npm/streaming-markdown/smd.min.js';
+        window.smd = smd;
+    </script>
     <script>
         var username = "<%= username %>";
         var contextPath = "<%= contextPath %>";
     </script>
-    <script src="<%= contextPath %>/resources/js/script-openai.js"></script>
+    <script src="<%= contextPath %>/resources/js/script-openai.js?v=<%= System.currentTimeMillis() %>"></script>
 </head>
 <body>
 <%@include file="navbarTop.jsp"%>

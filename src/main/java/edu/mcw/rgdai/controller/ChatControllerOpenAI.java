@@ -20,16 +20,21 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.ai.document.Document;
 import org.springframework.http.ResponseEntity;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.springframework.ai.openai.OpenAiChatOptions;
 
 @RestController
@@ -47,6 +52,7 @@ public class ChatControllerOpenAI {
     private final DocumentEmbeddingOpenAIRepository repository;
     private final RecaptchaService recaptchaService;
     private static final String CHAT_MEMORY_CONVERSATION_ID_KEY = "chat_memory_conversation_id";
+    private final ExecutorService streamExecutor = Executors.newCachedThreadPool();
 
     public ChatControllerOpenAI(
             ApplicationContext context,
@@ -96,7 +102,6 @@ public class ChatControllerOpenAI {
                        Authentication user,
                        HttpServletRequest request) {
 
-        long t0 = System.currentTimeMillis();
         LOG.info("OpenAI - Received question: {}", question.getQuestion());
         LOG.info("Processing with model: {}", configuredModel);
 
@@ -108,88 +113,382 @@ public class ChatControllerOpenAI {
         }
 
         try {
-            // Extract NCTIDs from current question
-            List<String> currentNCTIDs = extractNCTIDs(question.getQuestion());
+            PreProcessResult pp = preProcess(question, request);
 
-            // Get NCTIDs from previous conversation (stored in session)
-            Set<String> allNCTIDs = new HashSet<>(currentNCTIDs);
-            Set<String> sessionNCTIDs = (Set<String>) request.getSession().getAttribute("conversationNCTIDs");
-            if (sessionNCTIDs != null && !sessionNCTIDs.isEmpty()) {
-                allNCTIDs.addAll(sessionNCTIDs);
-                LOG.info("Retrieved {} NCTIDs from session: {}", sessionNCTIDs.size(), sessionNCTIDs);
-            }
-
-            if (!allNCTIDs.isEmpty()) {
-                LOG.info("Found {} unique NCTIDs in conversation (current + session): {}", allNCTIDs.size(), allNCTIDs);
-            }
-            long t1 = System.currentTimeMillis();
-
-            // STAGE 1: Broad retrieval - Get top 80 candidates from semantic search WITH SCORES
-            List<Document> candidates;
-            if (openaiVectorStore instanceof PostgresVectorStoreOpenAI) {
-                // Use the enhanced method that includes similarity scores in metadata
-                PostgresVectorStoreOpenAI vectorStoreWithScores = (PostgresVectorStoreOpenAI) openaiVectorStore;
-                candidates = vectorStoreWithScores.similaritySearchWithScores(
-                        SearchRequest.query(question.getQuestion())
-                                .withTopK(80)
-                                .withSimilarityThreshold(0.35));
-            } else {
-                // Fallback to regular method (won't have scores for re-ranking)
-                candidates = openaiVectorStore.similaritySearch(
-                        SearchRequest.query(question.getQuestion())
-                                .withTopK(80)
-                                .withSimilarityThreshold(0.35));
-            }
-            long t2 = System.currentTimeMillis();
-            LOG.info("Stage 1: Retrieved {} candidates from semantic similarity search", candidates.size());
-
-            // STAGE 2: Re-rank using semantic + keyword scoring
-            List<Document> documents = rerankDocuments(candidates, question.getQuestion());
-
-            // Take top 40 after re-ranking
-            if (documents.size() > 40) {
-                documents = documents.subList(0, 40);
-            }
-            long t3 = System.currentTimeMillis();
-            LOG.info("Stage 2: Re-ranked and selected top {} documents", documents.size());
-
-            // Add documents for all mentioned NCTIDs (current question + conversation history)
-            if (!allNCTIDs.isEmpty()) {
-                int initialSize = documents.size();
-                for (String nctid : allNCTIDs) {
-                    List<Document> nctidDocs = getDocumentsByNCTID(nctid);
-                    documents.addAll(nctidDocs);
-                }
-                int addedCount = documents.size() - initialSize;
-                LOG.info("Added {} documents for {} NCTIDs mentioned in conversation", addedCount, allNCTIDs.size());
-            }
-
-            long t4 = System.currentTimeMillis();
-            LOG.info("OpenAI - Total documents for context: {}", documents.size());
-
-            if (documents.isEmpty()) {
+            if (pp.isEmpty) {
                 return new Answer("I don't have information about that topic in my knowledge base.");
             }
 
-//            StringBuilder contextBuilder = new StringBuilder();
-//            for (Document doc : documents) {
-//                contextBuilder.append(doc.getContent()).append("\n\n");
-//            }
-            StringBuilder contextBuilder = new StringBuilder();
-            Set<String> usedFilenames = new HashSet<>();
-            for (Document doc : documents) {
-                String filename = doc.getMetadata().getOrDefault("filename", "unknown").toString();
-                // Extract just the NCT ID if filename starts with NCT and contains a colon
-                if (filename.startsWith("NCT") && filename.contains(":")) {
-                    filename = filename.split(":")[0];
+            String response = chatClient.prompt()
+                    .system(pp.systemMessage)
+                    .user(question.getQuestion())
+                    .options(OpenAiChatOptions.builder()
+                            .withStreamUsage(false)
+                            .withModel(configuredModel)
+                            .withTemperature(1.0)
+                            .build())
+                    .advisors(spec -> spec.param(CHAT_MEMORY_CONVERSATION_ID_KEY, conversationId))
+                    .call()
+                    .content();
+
+            long t6 = System.currentTimeMillis();
+            LOG.info("OpenAI - Generated response with system message approach using model: {}", configuredModel);
+
+            // Post-process response to wrap filenames with [[...]] markers for frontend linking
+            response = wrapFilenamesInResponse(response, pp.usedFilenames);
+
+            // Extract NCTIDs from AI response and store in session for future questions
+            List<String> responseNCTIDs = extractNCTIDs(response);
+            if (!responseNCTIDs.isEmpty()) {
+                Set<String> conversationNCTIDs = (Set<String>) request.getSession().getAttribute("conversationNCTIDs");
+                if (conversationNCTIDs == null) {
+                    conversationNCTIDs = new HashSet<>();
                 }
-                // Collect filenames for post-processing (exclude NCT IDs and unknown)
-                if (!filename.equals("unknown") && !filename.startsWith("NCT")) {
-                    usedFilenames.add(filename);
-                }
-                contextBuilder.append(String.format("--- FROM: %s ---\n%s\n\n", filename, doc.getContent()));
+                int beforeSize = conversationNCTIDs.size();
+                conversationNCTIDs.addAll(responseNCTIDs);
+                int afterSize = conversationNCTIDs.size();
+                int newNCTIDs = afterSize - beforeSize;
+                request.getSession().setAttribute("conversationNCTIDs", conversationNCTIDs);
+                LOG.info("Found {} NCTID mentions in response, {} unique NCTIDs total in conversation ({} new)",
+                         responseNCTIDs.size(), conversationNCTIDs.size(), newNCTIDs);
+                LOG.debug("Session NCTIDs: {}", conversationNCTIDs);
             }
-            String systemMessage = String.format("""
+
+            long t7 = System.currentTimeMillis();
+
+            // Log timing summary
+            long total = t7 - pp.t0;
+            long nctidExtract = pp.t1 - pp.t0;
+            long vectorSearch = pp.t2 - pp.t1;
+            long rerank = pp.t3 - pp.t2;
+            long nctidLookup = pp.t4 - pp.t3;
+            long contextBuild = pp.t5 - pp.t4;
+            long openaiApi = t6 - pp.t5;
+            long postProcess = t7 - t6;
+
+            TIMING_LOG.info("TIMING: [Q: \"{}\"]", question.getQuestion());
+            TIMING_LOG.info("  NCTID Extraction:    {}ms ({}s)", nctidExtract, String.format("%.2f", nctidExtract / 1000.0));
+            TIMING_LOG.info("  Vector Search:       {}ms ({}s)", vectorSearch, String.format("%.2f", vectorSearch / 1000.0));
+            TIMING_LOG.info("  Re-ranking:          {}ms ({}s)", rerank, String.format("%.2f", rerank / 1000.0));
+            TIMING_LOG.info("  NCTID DB Lookup:     {}ms ({}s)", nctidLookup, String.format("%.2f", nctidLookup / 1000.0));
+            TIMING_LOG.info("  Context Building:    {}ms ({}s)", contextBuild, String.format("%.2f", contextBuild / 1000.0));
+            TIMING_LOG.info("  OpenAI API Call:     {}ms ({}s)", openaiApi, String.format("%.2f", openaiApi / 1000.0));
+            TIMING_LOG.info("  Post-processing:     {}ms ({}s)", postProcess, String.format("%.2f", postProcess / 1000.0));
+            TIMING_LOG.info("  -----------------------------");
+            TIMING_LOG.info("  TOTAL:               {}ms ({}s)", total, String.format("%.2f", total / 1000.0));
+
+            return new Answer(response);
+
+        } catch (Exception e) {
+            LOG.error("OpenAI - Error generating response with model {}: {}", configuredModel, e.getMessage(), e);
+            return new Answer("OpenAI Error: " + e.getMessage());
+        }
+    }
+
+    @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter chatStream(@RequestBody Question question,
+                                  Authentication user,
+                                  HttpServletRequest request) {
+
+        LOG.info("OpenAI STREAM - Received question: {}", question.getQuestion());
+        LOG.info("Processing with model: {}", configuredModel);
+
+        SseEmitter emitter = new SseEmitter(180_000L); // 3 minute timeout
+
+        String conversationId = getOrCreateConversationId(user, request);
+        HttpSession session = request.getSession();
+
+        // Handle greetings immediately
+        if (isGreeting(question.getQuestion())) {
+            streamExecutor.execute(() -> {
+                try {
+                    String greeting = "Hello! I'm the SCGE AI Assistant. I can help you with questions about the documents in my knowledge base. What would you like to know?";
+                    emitter.send(SseEmitter.event().name("done")
+                            .data("{\"fullResponse\":\"" + escapeJson(greeting) + "\"}"));
+                    emitter.complete();
+                } catch (IOException e) {
+                    emitter.completeWithError(e);
+                }
+            });
+            return emitter;
+        }
+
+        // Pre-processing (synchronous - vector search, re-ranking, context building)
+        PreProcessResult pp;
+        try {
+            pp = preProcess(question, request);
+        } catch (Exception e) {
+            LOG.error("OpenAI STREAM - Error in pre-processing: {}", e.getMessage(), e);
+            streamExecutor.execute(() -> {
+                try {
+                    emitter.send(SseEmitter.event().name("error")
+                            .data("Error: " + e.getMessage()));
+                    emitter.complete();
+                } catch (IOException ex) {
+                    emitter.completeWithError(ex);
+                }
+            });
+            return emitter;
+        }
+
+        if (pp.isEmpty) {
+            streamExecutor.execute(() -> {
+                try {
+                    String msg = "I don't have information about that topic in my knowledge base.";
+                    emitter.send(SseEmitter.event().name("done")
+                            .data("{\"fullResponse\":\"" + escapeJson(msg) + "\"}"));
+                    emitter.complete();
+                } catch (IOException e) {
+                    emitter.completeWithError(e);
+                }
+            });
+            return emitter;
+        }
+
+        // Capture references for async use
+        final PreProcessResult ppFinal = pp;
+
+        emitter.onTimeout(() -> LOG.warn("SSE stream timed out"));
+        emitter.onError(e -> LOG.error("SSE stream error: {}", e.getMessage()));
+
+        // Async streaming
+        streamExecutor.execute(() -> {
+            StringBuilder fullResponse = new StringBuilder();
+
+            try {
+                chatClient.prompt()
+                        .system(ppFinal.systemMessage)
+                        .user(question.getQuestion())
+                        .options(OpenAiChatOptions.builder()
+                                .withModel(configuredModel)
+                                .withTemperature(1.0)
+                                .build())
+                        .advisors(spec -> spec.param(CHAT_MEMORY_CONVERSATION_ID_KEY, conversationId))
+                        .stream()
+                        .content()
+                        .doOnNext(token -> {
+                            try {
+                                fullResponse.append(token);
+                                emitter.send(SseEmitter.event().name("token").data(token));
+                            } catch (IOException e) {
+                                LOG.error("Error sending SSE token", e);
+                            }
+                        })
+                        .doOnError(error -> {
+                            LOG.error("OpenAI STREAM error: {}", error.getMessage(), error);
+                            try {
+                                emitter.send(SseEmitter.event().name("error")
+                                        .data("Error: " + error.getMessage()));
+                            } catch (IOException ignored) {}
+                            emitter.completeWithError(error);
+                        })
+                        .doOnComplete(() -> {
+                            try {
+                                long t6 = System.currentTimeMillis();
+
+                                // Server-side post-processing
+                                String processed = wrapFilenamesInResponse(
+                                        fullResponse.toString(), ppFinal.usedFilenames);
+
+                                // NCTID extraction and session storage
+                                List<String> responseNCTIDs = extractNCTIDs(processed);
+                                if (!responseNCTIDs.isEmpty()) {
+                                    Set<String> conversationNCTIDs = (Set<String>)
+                                            session.getAttribute("conversationNCTIDs");
+                                    if (conversationNCTIDs == null) {
+                                        conversationNCTIDs = new HashSet<>();
+                                    }
+                                    conversationNCTIDs.addAll(responseNCTIDs);
+                                    session.setAttribute("conversationNCTIDs", conversationNCTIDs);
+                                    LOG.info("STREAM - Stored {} NCTIDs in session", conversationNCTIDs.size());
+                                }
+
+                                // Send final done event with processed response
+                                emitter.send(SseEmitter.event().name("done")
+                                        .data("{\"fullResponse\":\"" + escapeJson(processed) + "\"}"));
+                                emitter.complete();
+
+                                // Timing
+                                long t7 = System.currentTimeMillis();
+                                long total = t7 - ppFinal.t0;
+                                long openaiApi = t6 - ppFinal.t5;
+                                long postProcess = t7 - t6;
+                                long nctidExtract = ppFinal.t1 - ppFinal.t0;
+                                long vectorSearch = ppFinal.t2 - ppFinal.t1;
+                                long rerank = ppFinal.t3 - ppFinal.t2;
+                                long nctidLookup = ppFinal.t4 - ppFinal.t3;
+                                long contextBuild = ppFinal.t5 - ppFinal.t4;
+
+                                TIMING_LOG.info("STREAM TIMING: [Q: \"{}\"]", question.getQuestion());
+                                TIMING_LOG.info("  NCTID Extraction:    {}ms ({}s)", nctidExtract, String.format("%.2f", nctidExtract / 1000.0));
+                                TIMING_LOG.info("  Vector Search:       {}ms ({}s)", vectorSearch, String.format("%.2f", vectorSearch / 1000.0));
+                                TIMING_LOG.info("  Re-ranking:          {}ms ({}s)", rerank, String.format("%.2f", rerank / 1000.0));
+                                TIMING_LOG.info("  NCTID DB Lookup:     {}ms ({}s)", nctidLookup, String.format("%.2f", nctidLookup / 1000.0));
+                                TIMING_LOG.info("  Context Building:    {}ms ({}s)", contextBuild, String.format("%.2f", contextBuild / 1000.0));
+                                TIMING_LOG.info("  OpenAI API Stream:   {}ms ({}s)", openaiApi, String.format("%.2f", openaiApi / 1000.0));
+                                TIMING_LOG.info("  Post-processing:     {}ms ({}s)", postProcess, String.format("%.2f", postProcess / 1000.0));
+                                TIMING_LOG.info("  -----------------------------");
+                                TIMING_LOG.info("  TOTAL:               {}ms ({}s)", total, String.format("%.2f", total / 1000.0));
+
+                            } catch (IOException e) {
+                                LOG.error("Error sending done event", e);
+                                emitter.completeWithError(e);
+                            }
+                        })
+                        .subscribe();
+
+            } catch (Exception e) {
+                LOG.error("Error setting up stream: {}", e.getMessage(), e);
+                try {
+                    emitter.send(SseEmitter.event().name("error")
+                            .data("Error: " + e.getMessage()));
+                } catch (IOException ignored) {}
+                emitter.completeWithError(e);
+            }
+        });
+
+        return emitter;
+    }
+
+    private String escapeJson(String text) {
+        if (text == null) return "";
+        return text.replace("\\", "\\\\")
+                   .replace("\"", "\\\"")
+                   .replace("\n", "\\n")
+                   .replace("\r", "\\r")
+                   .replace("\t", "\\t");
+    }
+
+    @PostMapping("/reset-memory")
+    public ResponseEntity<Map<String, String>> resetChatMemory(
+            Authentication user,
+            HttpServletRequest request) {
+
+        LOG.info("OpenAI - Reset chat memory requested");
+        try {
+            String oldId = getOrCreateConversationId(user, request);
+            chatMemory.clear(oldId);
+            LOG.info("OpenAI - Cleared memory for conversation ID: {}", oldId);
+
+            request.getSession().removeAttribute("openai_conversation_id");
+            request.getSession().removeAttribute("conversationNCTIDs");
+            LOG.info("OpenAI - Cleared session NCTIDs");
+
+            String newId = "reset_" + System.currentTimeMillis();
+            request.getSession().setAttribute("openai_conversation_id", newId);
+            LOG.info("OpenAI - Started new conversation with ID: {}", newId);
+
+            Map<String, String> resp = new HashMap<>();
+            resp.put("status", "success");
+            resp.put("message", "Chat memory cleared successfully");
+            resp.put("oldConversationId", oldId);
+            resp.put("newConversationId", newId);
+            return ResponseEntity.ok(resp);
+
+        } catch (Exception e) {
+            LOG.error("OpenAI - Error resetting chat memory: {}", e.getMessage(), e);
+            Map<String, String> resp = new HashMap<>();
+            resp.put("status", "error");
+            resp.put("message", "Failed to reset chat memory");
+            return ResponseEntity.status(500).body(resp);
+        }
+    }
+
+    /**
+     * Holds the result of pre-processing: system message, filenames, and timing milestones.
+     */
+    private static class PreProcessResult {
+        String systemMessage;
+        Set<String> usedFilenames;
+        boolean isEmpty;
+        long t0, t1, t2, t3, t4, t5;
+    }
+
+    /**
+     * Shared pre-processing: NCTID extraction, vector search, re-ranking, context building.
+     * Used by both chat() and chatStream().
+     */
+    private PreProcessResult preProcess(Question question, HttpServletRequest request) {
+        PreProcessResult result = new PreProcessResult();
+        result.t0 = System.currentTimeMillis();
+
+        // Extract NCTIDs from current question
+        List<String> currentNCTIDs = extractNCTIDs(question.getQuestion());
+
+        // Get NCTIDs from previous conversation (stored in session)
+        Set<String> allNCTIDs = new HashSet<>(currentNCTIDs);
+        Set<String> sessionNCTIDs = (Set<String>) request.getSession().getAttribute("conversationNCTIDs");
+        if (sessionNCTIDs != null && !sessionNCTIDs.isEmpty()) {
+            allNCTIDs.addAll(sessionNCTIDs);
+            LOG.info("Retrieved {} NCTIDs from session: {}", sessionNCTIDs.size(), sessionNCTIDs);
+        }
+
+        if (!allNCTIDs.isEmpty()) {
+            LOG.info("Found {} unique NCTIDs in conversation (current + session): {}", allNCTIDs.size(), allNCTIDs);
+        }
+        result.t1 = System.currentTimeMillis();
+
+        // STAGE 1: Broad retrieval - Get top 80 candidates from semantic search WITH SCORES
+        List<Document> candidates;
+        if (openaiVectorStore instanceof PostgresVectorStoreOpenAI) {
+            PostgresVectorStoreOpenAI vectorStoreWithScores = (PostgresVectorStoreOpenAI) openaiVectorStore;
+            candidates = vectorStoreWithScores.similaritySearchWithScores(
+                    SearchRequest.query(question.getQuestion())
+                            .withTopK(80)
+                            .withSimilarityThreshold(0.35));
+        } else {
+            candidates = openaiVectorStore.similaritySearch(
+                    SearchRequest.query(question.getQuestion())
+                            .withTopK(80)
+                            .withSimilarityThreshold(0.35));
+        }
+        result.t2 = System.currentTimeMillis();
+        LOG.info("Stage 1: Retrieved {} candidates from semantic similarity search", candidates.size());
+
+        // STAGE 2: Re-rank using semantic + keyword scoring
+        List<Document> documents = rerankDocuments(candidates, question.getQuestion());
+
+        // Take top 40 after re-ranking
+        if (documents.size() > 40) {
+            documents = documents.subList(0, 40);
+        }
+        result.t3 = System.currentTimeMillis();
+        LOG.info("Stage 2: Re-ranked and selected top {} documents", documents.size());
+
+        // Add documents for all mentioned NCTIDs (current question + conversation history)
+        if (!allNCTIDs.isEmpty()) {
+            int initialSize = documents.size();
+            for (String nctid : allNCTIDs) {
+                List<Document> nctidDocs = getDocumentsByNCTID(nctid);
+                documents.addAll(nctidDocs);
+            }
+            int addedCount = documents.size() - initialSize;
+            LOG.info("Added {} documents for {} NCTIDs mentioned in conversation", addedCount, allNCTIDs.size());
+        }
+
+        result.t4 = System.currentTimeMillis();
+        LOG.info("OpenAI - Total documents for context: {}", documents.size());
+
+        if (documents.isEmpty()) {
+            result.isEmpty = true;
+            return result;
+        }
+
+        // Build context and collect filenames
+        StringBuilder contextBuilder = new StringBuilder();
+        result.usedFilenames = new HashSet<>();
+        for (Document doc : documents) {
+            String filename = doc.getMetadata().getOrDefault("filename", "unknown").toString();
+            if (filename.startsWith("NCT") && filename.contains(":")) {
+                filename = filename.split(":")[0];
+            }
+            if (!filename.equals("unknown") && !filename.startsWith("NCT")) {
+                result.usedFilenames.add(filename);
+            }
+            contextBuilder.append(String.format("--- FROM: %s ---\n%s\n\n", filename, doc.getContent()));
+        }
+
+        result.systemMessage = String.format("""
         You are a friendly, helpful AI assistant made available by the
         Somatic Cell Genome Editing (SCGE) Consortium at the
         Medical College of Wisconsin (MCW).
@@ -282,6 +581,14 @@ public class ChatControllerOpenAI {
            - Do not infer outcomes, effectiveness, safety conclusions, or
              regulatory meaning beyond what is explicitly stated.
 
+        10. DOCUMENT REFERENCES
+           When mentioning a document name in your response, wrap it in
+           double brackets using the exact filename from the
+           "--- FROM: filename ---" headers. Always include the .md extension.
+           Example: [[Guidance for Industry M4 The CTD - General Questions and Answers.md]]
+           Do NOT wrap clinical trial references (filenames starting with
+           CLINICAL) - those are handled separately via their NCT IDs.
+
         SOURCE REPORTING (REQUIRED):
 
         At the end of every response, include:
@@ -295,119 +602,9 @@ public class ChatControllerOpenAI {
         - If no files were used, write exactly:
           SOURCES_USED: None
         """, contextBuilder);
-            long t5 = System.currentTimeMillis();
+        result.t5 = System.currentTimeMillis();
 
-//            String systemMessage = String.format("""
-//                    Answer using the context below OR conversation history. Do NOT use external knowledge about general topics, mountains, etc.
-//                    When asked about "last question" or "previous question", refer to the most recent user message in the conversation.
-//                    IMPORTANT: When asked about "last question" or "previous question", only refer to questions YOU were asked in THIS conversation, not questions mentioned in the document context.
-//
-//                    Context:
-//                    ---------------------
-//                    %s
-//                    ---------------------
-//                    Add "SOURCES_USED: %s" when using context.
-//                    """, contextBuilder, filenames);
-
-            String response = chatClient.prompt()
-                    .system(systemMessage)
-                    .user(question.getQuestion())
-                    .options(OpenAiChatOptions.builder()
-                            .withStreamUsage(false)
-                            .withModel(configuredModel)
-                            .withTemperature(1.0)
-                            .build())
-                    .advisors(spec -> spec.param(CHAT_MEMORY_CONVERSATION_ID_KEY, conversationId))
-                    .call()
-                    .content();
-
-            long t6 = System.currentTimeMillis();
-            LOG.info("OpenAI - Generated response with system message approach using model: {}", configuredModel);
-
-            // Post-process response to wrap filenames with [[...]] markers for frontend linking
-            response = wrapFilenamesInResponse(response, usedFilenames);
-
-            // Extract NCTIDs from AI response and store in session for future questions
-            List<String> responseNCTIDs = extractNCTIDs(response);
-            if (!responseNCTIDs.isEmpty()) {
-                Set<String> conversationNCTIDs = (Set<String>) request.getSession().getAttribute("conversationNCTIDs");
-                if (conversationNCTIDs == null) {
-                    conversationNCTIDs = new HashSet<>();
-                }
-                int beforeSize = conversationNCTIDs.size();
-                conversationNCTIDs.addAll(responseNCTIDs);
-                int afterSize = conversationNCTIDs.size();
-                int newNCTIDs = afterSize - beforeSize;
-                request.getSession().setAttribute("conversationNCTIDs", conversationNCTIDs);
-                LOG.info("Found {} NCTID mentions in response, {} unique NCTIDs total in conversation ({} new)",
-                         responseNCTIDs.size(), conversationNCTIDs.size(), newNCTIDs);
-                LOG.debug("Session NCTIDs: {}", conversationNCTIDs);
-            }
-
-            long t7 = System.currentTimeMillis();
-
-            // Log timing summary
-            long total = t7 - t0;
-            long nctidExtract = t1 - t0;
-            long vectorSearch = t2 - t1;
-            long rerank = t3 - t2;
-            long nctidLookup = t4 - t3;
-            long contextBuild = t5 - t4;
-            long openaiApi = t6 - t5;
-            long postProcess = t7 - t6;
-
-            TIMING_LOG.info("TIMING: [Q: \"{}\"]", question.getQuestion());
-            TIMING_LOG.info("  NCTID Extraction:    {}ms ({}s)", nctidExtract, String.format("%.2f", nctidExtract / 1000.0));
-            TIMING_LOG.info("  Vector Search:       {}ms ({}s)", vectorSearch, String.format("%.2f", vectorSearch / 1000.0));
-            TIMING_LOG.info("  Re-ranking:          {}ms ({}s)", rerank, String.format("%.2f", rerank / 1000.0));
-            TIMING_LOG.info("  NCTID DB Lookup:     {}ms ({}s)", nctidLookup, String.format("%.2f", nctidLookup / 1000.0));
-            TIMING_LOG.info("  Context Building:    {}ms ({}s)", contextBuild, String.format("%.2f", contextBuild / 1000.0));
-            TIMING_LOG.info("  OpenAI API Call:     {}ms ({}s)", openaiApi, String.format("%.2f", openaiApi / 1000.0));
-            TIMING_LOG.info("  Post-processing:     {}ms ({}s)", postProcess, String.format("%.2f", postProcess / 1000.0));
-            TIMING_LOG.info("  -----------------------------");
-            TIMING_LOG.info("  TOTAL:               {}ms ({}s)", total, String.format("%.2f", total / 1000.0));
-
-            return new Answer(response);
-
-        } catch (Exception e) {
-            LOG.error("OpenAI - Error generating response with model {}: {}", configuredModel, e.getMessage(), e);
-            return new Answer("OpenAI Error: " + e.getMessage());
-        }
-    }
-
-    @PostMapping("/reset-memory")
-    public ResponseEntity<Map<String, String>> resetChatMemory(
-            Authentication user,
-            HttpServletRequest request) {
-
-        LOG.info("OpenAI - Reset chat memory requested");
-        try {
-            String oldId = getOrCreateConversationId(user, request);
-            chatMemory.clear(oldId);
-            LOG.info("OpenAI - Cleared memory for conversation ID: {}", oldId);
-
-            request.getSession().removeAttribute("openai_conversation_id");
-            request.getSession().removeAttribute("conversationNCTIDs");
-            LOG.info("OpenAI - Cleared session NCTIDs");
-
-            String newId = "reset_" + System.currentTimeMillis();
-            request.getSession().setAttribute("openai_conversation_id", newId);
-            LOG.info("OpenAI - Started new conversation with ID: {}", newId);
-
-            Map<String, String> resp = new HashMap<>();
-            resp.put("status", "success");
-            resp.put("message", "Chat memory cleared successfully");
-            resp.put("oldConversationId", oldId);
-            resp.put("newConversationId", newId);
-            return ResponseEntity.ok(resp);
-
-        } catch (Exception e) {
-            LOG.error("OpenAI - Error resetting chat memory: {}", e.getMessage(), e);
-            Map<String, String> resp = new HashMap<>();
-            resp.put("status", "error");
-            resp.put("message", "Failed to reset chat memory");
-            return ResponseEntity.status(500).body(resp);
-        }
+        return result;
     }
 
     private boolean isGreeting(String text) {
@@ -593,20 +790,23 @@ public class ChatControllerOpenAI {
             String baseName = filename.endsWith(".md") ? filename.substring(0, filename.length() - 3) : filename;
             String fullName = filename.endsWith(".md") ? filename : filename + ".md";
 
-            // Skip if already wrapped
-            if (result.contains("[[" + fullName + "]]")) {
-                continue;
+            String marker = "[[" + fullName + "]]";
+
+            // Step 1: Wrap fullName (with .md) where not already inside [[...]]
+            // Uses regex to avoid double-wrapping when AI already added [[markers]] in body
+            String fullNamePattern = "(?<!\\[\\[)" + java.util.regex.Pattern.quote(fullName) + "(?!\\]\\])";
+            result = result.replaceAll(fullNamePattern, java.util.regex.Matcher.quoteReplacement(marker));
+
+            // Step 2: Wrap baseName (without .md) - e.g., in body text
+            // Negative lookbehind prevents double-wrapping inside [[...]]
+            // Negative lookahead prevents matching baseName followed by .md]]
+            if (!baseName.isEmpty()) {
+                String pattern = "(?i)(?<!\\[\\[)" + java.util.regex.Pattern.quote(baseName) + "(?!\\.md\\]\\])";
+                result = result.replaceAll(pattern, java.util.regex.Matcher.quoteReplacement(marker));
             }
 
-            // Try exact match first: fullName (with .md)
-            if (result.contains(fullName)) {
-                result = result.replace(fullName, "[[" + fullName + "]]");
-                continue;
-            }
-
-            // Try exact match: baseName (without .md)
-            if (!baseName.isEmpty() && result.contains(baseName) && !result.contains("[[" + baseName)) {
-                result = result.replace(baseName, "[[" + fullName + "]]");
+            // Skip variations if already wrapped
+            if (result.contains(marker)) {
                 continue;
             }
 
@@ -621,13 +821,13 @@ public class ChatControllerOpenAI {
 
                 // Try with .md
                 if (result.contains(variationFull) && !result.contains("[[" + variationFull)) {
-                    result = result.replace(variationFull, "[[" + fullName + "]]");
+                    result = result.replace(variationFull, marker);
                     matched = true;
                     break;
                 }
                 // Try without .md
                 if (result.contains(variation) && !result.contains("[[" + variation)) {
-                    result = result.replace(variation, "[[" + fullName + "]]");
+                    result = result.replace(variation, marker);
                     matched = true;
                     break;
                 }
@@ -645,6 +845,16 @@ public class ChatControllerOpenAI {
     private List<String> generateFilenameVariations(String baseName) {
         List<String> variations = new ArrayList<>();
 
+        // AI often uses en-dash (–) or em-dash (—) instead of hyphen (-)
+        String enDashVersion = baseName.replace("-", "\u2013");
+        if (!enDashVersion.equals(baseName)) {
+            variations.add(enDashVersion);
+        }
+        String hyphenVersion = baseName.replace("\u2013", "-").replace("\u2014", "-");
+        if (!hyphenVersion.equals(baseName)) {
+            variations.add(hyphenVersion);
+        }
+
         // Compacted (spaces removed)
         variations.add(baseName.replaceAll("\\s+", ""));
 
@@ -660,13 +870,15 @@ public class ChatControllerOpenAI {
         variations.add(baseName.toLowerCase().replaceAll("\\s+", "_"));
         variations.add(baseName.toLowerCase());
 
-        // Normalize all separators to single type (handles mixed patterns)
-        // e.g., "Some-Name_Here" -> "SomeNameHere", "Some-Name-Here", "Some_Name_Here"
-        String normalizedBase = baseName.replaceAll("[\\s_-]+", " ").trim();
+        // Normalize all separators (spaces, underscores, hyphens, en/em-dashes) to space
+        String normalizedBase = baseName.replaceAll("[\\s_\\-\\u2013\\u2014]+", " ").trim();
         if (!normalizedBase.equals(baseName)) {
+            variations.add(normalizedBase);
             variations.add(normalizedBase.replaceAll("\\s+", ""));
             variations.add(normalizedBase.replaceAll("\\s+", "-"));
             variations.add(normalizedBase.replaceAll("\\s+", "_"));
+            variations.add(normalizedBase.toLowerCase());
+            variations.add(normalizedBase.toLowerCase().replaceAll("\\s+", "_"));
         }
 
         return variations;
