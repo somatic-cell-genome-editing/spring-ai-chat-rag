@@ -36,9 +36,6 @@ const loadStats = () => {
 };
 
 const loadDocuments = () => {
-    const tbody = document.getElementById('documentsBody');
-    tbody.innerHTML = '<tr class="loading-row"><td colspan="5"><div class="table-spinner"></div> Loading documents...</td></tr>';
-
     const params = new URLSearchParams({
         type: 'documents',
         page: docPage,
@@ -62,9 +59,6 @@ const loadDocuments = () => {
 };
 
 const loadTrials = () => {
-    const tbody = document.getElementById('trialsBody');
-    tbody.innerHTML = '<tr class="loading-row"><td colspan="5"><div class="table-spinner"></div> Loading clinical trials...</td></tr>';
-
     const params = new URLSearchParams({
         type: 'clinicalTrials',
         page: trialPage,

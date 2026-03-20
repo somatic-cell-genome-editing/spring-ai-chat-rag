@@ -296,6 +296,7 @@ body {
    ============================================================ */
 .table-wrapper {
     overflow-x: auto;
+    min-height: 400px;
 }
 
 .data-table {
