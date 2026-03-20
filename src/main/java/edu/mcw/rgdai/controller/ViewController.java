@@ -73,4 +73,15 @@ public class ViewController {
         return "chat";
     }
 
+    @GetMapping("/curation")
+    public String curation(jakarta.servlet.http.HttpServletRequest request) {
+        String serverName = request.getServerName();
+        if (serverName.equals("localhost") || serverName.equals("dev.scge.mcw.edu")) {
+            logger.info("Accessing curation page");
+            return "curation";
+        }
+        logger.warn("Curation page access denied for server: {}", serverName);
+        return "redirect:/chat";
+    }
+
 }

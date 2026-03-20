@@ -37,22 +37,6 @@
             font-size: 0.8em;
             margin-left: 10px;
         }
-        .model-switch {
-            position: absolute;
-            top: 15px;
-            right: 15px;
-        }
-        .model-switch a {
-            background: #28a745;
-            color: white;
-            padding: 8px 16px;
-            text-decoration: none;
-            border-radius: 6px;
-            font-size: 0.9em;
-        }
-        .model-switch a:hover {
-            background: #218838;
-        }
         /* Start Over Button Styles */
         .start-over-section {
             padding: 10px 20px;
@@ -142,11 +126,6 @@
 <%--                <img src="<%= chatPlatformBase %>/platform/common/images/SCGE_Platform_logo_5.jpg" alt="SCGE Platform Logo" class="header-logo"/>--%>
 <%--            </a>--%>
             <h2>SCGE Platform AI Assistant</h2>
-            <%if((request.getServerName().equals("localhost") )){%>
-<%--            <div class="model-switch">--%>
-<%--                <a href="<%= contextPath %>/" target="_blank">Switch to Ollama</a>--%>
-<%--            </div>--%>
-            <%}%>
 <%--            <div class="user-info">--%>
 <%--                Welcome, <%= username %>!--%>
 <%--                &lt;%&ndash;                <form action="<%= contextPath %>/logout" method="post" style="display: inline;">&ndash;%&gt;--%>
@@ -169,11 +148,16 @@
         <div class="start-over-section">
             <button id="startOverBtn" class="start-over-btn">Clear memory</button>
         </div>
-        <%if((request.getServerName().equals("localhost"))){%>
+<%--        <%if((request.getServerName().equals("localhost"))){%>--%>
+<%--        <div id="controls">--%>
+<%--            <button id="uploadFile" class="upload-btn">Upload File</button>--%>
+<%--            <button id="processUrl" class="upload-btn">Process URL</button>--%>
+<%--            <button id="loadTrials" class="upload-btn">Load Clinical Trials</button>--%>
+<%--        </div>--%>
+<%--        <%}%>--%>
+        <%if(request.getServerName().equals("localhost") || request.getServerName().equals("dev.scge.mcw.edu")){%>
         <div id="controls">
-            <button id="uploadFile" class="upload-btn">Upload File</button>
-            <button id="processUrl" class="upload-btn">Process URL</button>
-            <button id="loadTrials" class="upload-btn">Load Clinical Trials</button>
+            <a href="<%= contextPath %>/curation" target="_blank" class="upload-btn" style="text-decoration:none;"><i class="fas fa-cogs"></i> Curation</a>
         </div>
         <%}%>
         <div class="input-area">
