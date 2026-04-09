@@ -92,9 +92,9 @@ const boldSourcesUsed = (text) => {
 };
 
 // Function to remove "CLINICAL TRIAL" prefix from sources (handles all AI format variations)
+// Uses [\s_-]+ (one or more separators) so camelCase "clinicalTrials" in URLs is not affected
 const cleanupClinicalTrialSources = (text) => {
-    // Handles: "CLINICAL TRIAL: ", "CLINICAL-TRIAL_", "CLINICAL-TRIAL:", "CLINICAL_TRIAL_", etc.
-    return text.replace(/CLINICAL[\s_-]*TRIAL[\s_:-]*/gi, '');
+    return text.replace(/CLINICAL[\s_-]+TRIAL[\s_:-]*/gi, '');
 };
 
 // Show typing indicator
