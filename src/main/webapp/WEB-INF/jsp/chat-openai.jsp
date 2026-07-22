@@ -1,6 +1,7 @@
 <%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
 <%@ page import="org.springframework.security.core.context.SecurityContextHolder,
                   org.springframework.security.core.Authentication" %>
+<%@ page import="edu.mcw.scge.services.SCGEContext" %>
 <!DOCTYPE html>
 <html>
 <head>
@@ -155,7 +156,9 @@
 <%--            <button id="loadTrials" class="upload-btn">Load Clinical Trials</button>--%>
 <%--        </div>--%>
 <%--        <%}%>--%>
-        <%if(request.getServerName().equals("localhost") || request.getServerName().equals("dev.scge.mcw.edu")){%>
+<%--        <%if(request.getServerName().equals("localhost") || request.getServerName().equals("dev.scge.mcw.edu")){%>--%>
+        <%if(request.getServerName().equals("localhost") || SCGEContext.isDev()){%>
+
         <div id="controls">
             <a href="<%= contextPath %>/curation" target="_blank" class="upload-btn" style="text-decoration:none;"><i class="fas fa-cogs"></i> Curation</a>
         </div>
