@@ -2,6 +2,7 @@ package edu.mcw.rgdai.controller;
 
 import edu.mcw.rgdai.model.UrlRequest;
 import edu.mcw.rgdai.reader.UrlDocumentReader;
+import edu.mcw.rgdai.service.ChunkLabeler;
 import edu.mcw.rgdai.service.DocumentPreprocessor;
 import edu.mcw.rgdai.repository.DocumentEmbeddingOpenAIRepository;
 import edu.mcw.rgdai.model.DocumentEmbeddingOpenAI;
@@ -243,7 +244,8 @@ public class UrlController {
                     .withKeepSeparator(true)           // Keep separators for readability
                     .build();
 
-            List<Document> splitDocuments = splitter.apply(preprocessedDocs);
+            List<Document> splitDocuments = ChunkLabeler.applyLabels(
+                    splitter.apply(ChunkLabeler.addLabels(preprocessedDocs)));
             LOG.debug("Split into {} chunks after preprocessing", splitDocuments.size());
 
             // Add to OpenAI vector store

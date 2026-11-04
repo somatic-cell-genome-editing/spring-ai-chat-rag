@@ -1,6 +1,7 @@
 package edu.mcw.rgdai.controller;
 
 import edu.mcw.rgdai.model.UploadResponse;
+import edu.mcw.rgdai.service.ChunkLabeler;
 import edu.mcw.rgdai.service.DocumentPreprocessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,7 +78,8 @@ public class UploadControllerOpenAI {
                 .withKeepSeparator(true)           // Keep separators for readability
                 .build();
 
-        List<Document> splitDocuments = splitter.apply(preprocessedDocs);
+        List<Document> splitDocuments = ChunkLabeler.applyLabels(
+                splitter.apply(ChunkLabeler.addLabels(preprocessedDocs)));
         LOG.info("Split into {} chunks after preprocessing", splitDocuments.size());
 
         // Log sample of processed content
