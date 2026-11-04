@@ -16,12 +16,30 @@ const addToTranscript = (who, text) => {
     }
 };
 
+// Display name and avatar icon for each kind of message
+const ENTRY_STYLES = {
+    User: { label: "You", icon: "fa-user" },
+    AI: { label: "SCGE Assistant", icon: "fa-dna" },
+    SCGE: { label: "SCGE", icon: "fa-circle-info" }
+};
+
+const escapeHtml = (text) => String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
 const createTranscriptEntry = (who, name, text) => {
-    const modelBadge = (who === "AI") ? '<span style="background: #00a67e; color: white; padding: 2px 6px; border-radius: 10px; font-size: 0.8em; margin-left: 5px;">OpenAI</span>' : '';
-    // <div><b>${name}:</b> ${modelBadge} ${text}</div>
+    const style = ENTRY_STYLES[who] || { label: name, icon: "fa-comment" };
+    // User text is shown as typed; AI and SCGE text is already HTML
+    const body = (who === "User") ? escapeHtml(text) : text;
     return `
-    <div class="${who}Entry">
-        <div><b>${name}:</b> ${text}</div>
+    <div class="${who}Entry chat-msg">
+        <div class="msg-avatar"><i class="fa-solid ${style.icon}"></i></div>
+        <div class="msg-main">
+            <div class="msg-author">${style.label}</div>
+            <div class="msg-body">${body}</div>
+        </div>
     </div>`;
 };
 
@@ -174,13 +192,11 @@ const postQuestionStream = (question) => {
         hideTypingIndicator();
 
         // Create AI entry for streaming text
-        const aiEntry = document.createElement('div');
-        aiEntry.className = 'AIEntry';
-        const contentDiv = document.createElement('div');
-        contentDiv.innerHTML = '<b>AI:</b> ';
+        const entryHolder = document.createElement('div');
+        entryHolder.innerHTML = createTranscriptEntry("AI", "AI", "");
+        const aiEntry = entryHolder.firstElementChild;
         const streamSpan = document.createElement('span');
-        contentDiv.appendChild(streamSpan);
-        aiEntry.appendChild(contentDiv);
+        aiEntry.querySelector('.msg-body').appendChild(streamSpan);
         transcript.appendChild(aiEntry);
 
         // Scroll to show the AI entry
@@ -306,6 +322,7 @@ const submitTypedText = (event) => {
         postQuestion(typedText);
     }
     typedTextInput.value = '';
+    autoResizeInput(typedTextInput);
     return false;
 };
 
@@ -314,7 +331,8 @@ const startOverChat = () => {
         // Disable button during request
         const startOverBtn = document.getElementById("startOverBtn");
         startOverBtn.disabled = true;
-        startOverBtn.textContent = "Starting over...";
+        const startOverLabel = startOverBtn.querySelector('.btn-label') || startOverBtn;
+        startOverLabel.textContent = "Starting over...";
 
         fetch(contextPath + "/chat-openai/reset-memory", {
             method: "POST",
@@ -337,9 +355,15 @@ const startOverChat = () => {
             .finally(() => {
                 // Re-enable button
                 startOverBtn.disabled = false;
-                startOverBtn.textContent = "Clear memory";
+                startOverLabel.textContent = "Clear memory";
             });
     }
+};
+
+// Grow the message box with its content, up to the max-height set in CSS
+const autoResizeInput = (textarea) => {
+    textarea.style.height = 'auto';
+    textarea.style.height = textarea.scrollHeight + 'px';
 };
 
 // Initialize UI Events
@@ -350,6 +374,7 @@ const initUIEvents = () => {
 
     // Enter key in textarea
     const textarea = document.querySelector('#userInput');
+    textarea.addEventListener('input', () => autoResizeInput(textarea));
     textarea.addEventListener('keydown', e => {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();

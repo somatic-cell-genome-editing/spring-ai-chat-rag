@@ -27,6 +27,10 @@
     <link href="<%= chatPlatformBase %>/platform/css/navbarTop.css" rel="stylesheet" type="text/css"/>
     <link href="<%= chatPlatformBase %>/platform/css/base.css" rel="stylesheet" type="text/css"/>
     <link rel="stylesheet" href="<%= contextPath %>/resources/css/style.css"/>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="<%= contextPath %>/resources/css/chat-modern.css?v=<%= System.currentTimeMillis() %>"/>
     <style>
         /* OpenAI-specific styling */
         .openai-badge {
@@ -37,39 +41,6 @@
             border-radius: 12px;
             font-size: 0.8em;
             margin-left: 10px;
-        }
-        /* Start Over Button Styles */
-        .start-over-section {
-            padding: 10px 20px;
-            display: flex;
-            justify-content: flex-end;
-            border-top: 1px solid #eee;
-        }
-
-        .start-over-btn {
-            background-color: transparent;
-            color: #28a745;
-            padding: 8px 16px;
-            border: 1px solid #28a745;
-            border-radius: 20px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.3s ease;
-        }
-
-        .start-over-btn:hover {
-            background-color: #28a745;
-            color: white;
-        }
-
-        .start-over-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .start-over-btn:disabled:hover {
-            background-color: transparent;
-            color: #28a745;
         }
     </style>
     <!-- Markdown parser for AI responses -->
@@ -85,7 +56,7 @@
     </script>
     <script src="<%= contextPath %>/resources/js/script-openai.js?v=<%= System.currentTimeMillis() %>"></script>
 </head>
-<body>
+<body class="chat-modern">
 <%@include file="navbarTop.jsp"%>
 <div class="chat-container">
     <!-- Upload Modal -->
@@ -126,7 +97,14 @@
 <%--            <a href="<%= chatPlatformBase %>/platform/home">--%>
 <%--                <img src="<%= chatPlatformBase %>/platform/common/images/SCGE_Platform_logo_5.jpg" alt="SCGE Platform Logo" class="header-logo"/>--%>
 <%--            </a>--%>
-            <h2>SCGE Platform AI Assistant</h2>
+            <div class="header-icon"><i class="fa-solid fa-dna"></i></div>
+            <div class="header-text">
+                <h2>SCGE Platform AI Assistant</h2>
+                <div class="header-subtitle">Gene therapy clinical trials &middot; FDA guidance &middot; FDA meeting notes</div>
+            </div>
+            <button id="startOverBtn" class="start-over-btn" title="Clear the assistant's memory of this conversation">
+                <i class="fa-solid fa-rotate-left"></i><span class="btn-label">Clear memory</span>
+            </button>
 <%--            <div class="user-info">--%>
 <%--                Welcome, <%= username %>!--%>
 <%--                &lt;%&ndash;                <form action="<%= contextPath %>/logout" method="post" style="display: inline;">&ndash;%&gt;--%>
@@ -137,8 +115,9 @@
 
         <div id="disclaimer">
             <div id="disclaimerHeader">
-                <span class="disclaimer-arrow">&#9660;</span>
+                <i class="fa-solid fa-circle-info"></i>
                 <strong>Disclaimer</strong>
+                <span class="disclaimer-arrow">&#9660;</span>
             </div>
             <div id="disclaimerContent">
                 This AI chatbot has a library of knowledge limited to FDA guidance documents and gene therapy trial information updated regularly from <a href="https://clinicaltrials.gov" target="_blank">clinicaltrials.gov</a>. It's answers are restricted to these topics. Regulatory advice should be confirmed with a licensed regulatory consultant or with FDA. Nothing communicated by this chatbot should be interpreted as medical advice or replaces the advice of your doctor.
@@ -146,9 +125,6 @@
         </div>
 
         <div id="transcript"></div>
-        <div class="start-over-section">
-            <button id="startOverBtn" class="start-over-btn">Clear memory</button>
-        </div>
 <%--        <%if((request.getServerName().equals("localhost"))){%>--%>
 <%--        <div id="controls">--%>
 <%--            <button id="uploadFile" class="upload-btn">Upload File</button>--%>
@@ -164,8 +140,11 @@
         </div>
         <%}%>
         <div class="input-area">
-            <textarea id="userInput" placeholder="Ask a question..." rows="3"></textarea>
-            <button id="typedTextSubmit" class="submit-btn">Send</button>
+            <div class="composer">
+                <textarea id="userInput" placeholder="Ask a question..." rows="1"></textarea>
+                <button id="typedTextSubmit" class="submit-btn" title="Send" aria-label="Send"><i class="fa-solid fa-paper-plane"></i></button>
+            </div>
+            <div class="composer-hint">Enter to send &middot; Shift+Enter for a new line</div>
         </div>
     </div>
 </div>
