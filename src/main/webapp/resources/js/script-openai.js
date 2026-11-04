@@ -68,18 +68,19 @@ const convertNCTToLinks = (text) => {
     });
 };
 
-// Function to convert [[filename.md]] markers to clickable PDF links
+// Function to convert [[filename]] markers to clickable document links
 const convertMdToLinks = (text) => {
-    // Pattern to match [[filename.md]] markers from backend
+    // Pattern to match [[filename]] markers from backend
     // Supports filenames with spaces, parentheses, hyphens, etc.
-    const mdPattern = /\[\[([^\]]+\.md)\]\]/g;
+    const mdPattern = /\[\[([^\]]+)\]\]/g;
 
     return text.replace(mdPattern, (match, filename) => {
         // Trim leading/trailing spaces from filename
         filename = filename.trim();
-        // Remove .md extension and add .pdf
-        const baseFilename = filename.slice(0, -3); // Remove '.md'
-        const pdfFilename = baseFilename + '.pdf';
+        // name.md is served as name.pdf; other files (e.g. report.pdf) under their own name
+        const isMd = /\.md$/i.test(filename);
+        const baseFilename = isMd ? filename.slice(0, -3) : filename;
+        const pdfFilename = isMd ? baseFilename + '.pdf' : filename;
 
         // URL encode the filename to handle spaces and special characters
         const encodedFilename = encodeURIComponent(pdfFilename);
@@ -103,10 +104,9 @@ const convertMdToLinks = (text) => {
 // Function to make "SOURCES_USED:" bold and format properly
 const boldSourcesUsed = (text) => {
     // Add line break before SOURCES_USED if it's not already on its own line
-    // Also add spaces after commas in the sources list
+    // (sources are separated by "; " - commas elsewhere in the answer are left alone)
     return text.replace(/([^\n])\s*SOURCES_USED:\s*/g, '$1<strong class="sources-label">SOURCES USED:</strong> ')
-               .replace(/SOURCES_USED:\s*/g, '<strong class="sources-label">SOURCES USED:</strong> ')
-               .replace(/,(?=\S)/g, ', '); // Add space after comma if there isn't one
+               .replace(/SOURCES_USED:\s*/g, '<strong class="sources-label">SOURCES USED:</strong> ');
 };
 
 // Function to remove "CLINICAL TRIAL" prefix from sources (handles all AI format variations)
