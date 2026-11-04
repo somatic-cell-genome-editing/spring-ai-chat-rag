@@ -5,6 +5,7 @@ import edu.mcw.rgdai.model.Question;
 import edu.mcw.rgdai.model.DocumentEmbeddingOpenAI;
 import edu.mcw.rgdai.repository.DocumentEmbeddingOpenAIRepository;
 import edu.mcw.rgdai.vectorstore.PostgresVectorStoreOpenAI;
+import edu.mcw.rgdai.service.BoundedChatMemory;
 import edu.mcw.rgdai.service.RecaptchaService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -13,8 +14,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
-import org.springframework.ai.chat.memory.InMemoryChatMemory;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.MessageType;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -47,28 +52,63 @@ public class ChatControllerOpenAI {
     private ChatClient chatClient;
     private final VectorStore openaiVectorStore;
     private final String configuredModel;
-    private InMemoryChatMemory chatMemory;
+    private final BoundedChatMemory chatMemory;
     private final ChatModel openAiChatModel;
     private final DocumentEmbeddingOpenAIRepository repository;
     private final RecaptchaService recaptchaService;
     private static final String CHAT_MEMORY_CONVERSATION_ID_KEY = "chat_memory_conversation_id";
+    // Filename prefix of the generated Active trial summary documents (clinical-trials-rag-load-pipeline)
+    private static final String ACTIVE_TRIAL_SUMMARY_PREFIX = "ACTIVE TRIAL SUMMARY";
     private final ExecutorService streamExecutor = Executors.newCachedThreadPool();
+
+    // Retrieval settings (rag.* in application.properties)
+    private final int candidateCount;
+    private final int contextChunks;
+    private final double similarityThreshold;
+    private final int maxChunksPerSource;
+    private final int memoryWindowSize;
+
+    // Follow-up question rewriting
+    private final boolean queryRewriteEnabled;
+    private final String queryRewriteModel;
+    private final int queryRewriteHistoryMessages;
 
     public ChatControllerOpenAI(
             ApplicationContext context,
             @Qualifier("openaiVectorStore") VectorStore openaiVectorStore,
             @Value("${spring.ai.openai.model}") String configuredModel,
             DocumentEmbeddingOpenAIRepository repository,
-            RecaptchaService recaptchaService) {
+            RecaptchaService recaptchaService,
+            BoundedChatMemory chatMemory,
+            @Value("${rag.retrieval.candidate-count:150}") int candidateCount,
+            @Value("${rag.retrieval.context-chunks:60}") int contextChunks,
+            @Value("${rag.retrieval.similarity-threshold:0.2}") double similarityThreshold,
+            @Value("${rag.retrieval.max-chunks-per-source:8}") int maxChunksPerSource,
+            @Value("${rag.chat-memory.window-size:20}") int memoryWindowSize,
+            @Value("${rag.query-rewrite.enabled:true}") boolean queryRewriteEnabled,
+            @Value("${rag.query-rewrite.model:gpt-5.4-mini}") String queryRewriteModel,
+            @Value("${rag.query-rewrite.history-messages:6}") int queryRewriteHistoryMessages) {
 
         LOG.info("Initializing OpenAI ChatController with system messages for doc context");
         this.openaiVectorStore = openaiVectorStore;
         this.configuredModel = configuredModel;
         this.repository = repository;
         this.recaptchaService = recaptchaService;
-        this.chatMemory = new InMemoryChatMemory();
+        this.chatMemory = chatMemory;
+        this.candidateCount = candidateCount;
+        this.contextChunks = contextChunks;
+        this.similarityThreshold = similarityThreshold;
+        this.maxChunksPerSource = maxChunksPerSource;
+        this.memoryWindowSize = memoryWindowSize;
+        this.queryRewriteEnabled = queryRewriteEnabled;
+        this.queryRewriteModel = queryRewriteModel;
+        this.queryRewriteHistoryMessages = queryRewriteHistoryMessages;
 
         LOG.info("Configured OpenAI Model from properties: {}", configuredModel);
+        LOG.info("Retrieval: candidates={}, contextChunks={}, threshold={}, maxPerSource={}, memoryWindow={}",
+                candidateCount, contextChunks, similarityThreshold, maxChunksPerSource, memoryWindowSize);
+        LOG.info("Query rewrite: enabled={}, model={}, historyMessages={}",
+                queryRewriteEnabled, queryRewriteModel, queryRewriteHistoryMessages);
 
         Map<String, ChatModel> chatModels = context.getBeansOfType(ChatModel.class);
         ChatModel foundModel = null;
@@ -88,11 +128,12 @@ public class ChatControllerOpenAI {
         LOG.info("OpenAI ChatClient initialized successfully with model: {}", configuredModel);
     }
 
-    private ChatClient buildClient(ChatModel model, InMemoryChatMemory memory) {
+    private ChatClient buildClient(ChatModel model, BoundedChatMemory memory) {
         return ChatClient.builder(model)
                 .defaultAdvisors(
                         new SimpleLoggerAdvisor(),
-                        new MessageChatMemoryAdvisor(memory)
+                        // Only the most recent messages are replayed to the model
+                        new MessageChatMemoryAdvisor(memory, "default", memoryWindowSize)
                 )
                 .build();
     }
@@ -113,7 +154,7 @@ public class ChatControllerOpenAI {
         }
 
         try {
-            PreProcessResult pp = preProcess(question, request);
+            PreProcessResult pp = preProcess(question, request, conversationId);
 
             if (pp.isEmpty) {
                 return new Answer("I don't have information about that topic in my knowledge base.");
@@ -216,7 +257,7 @@ public class ChatControllerOpenAI {
         // Pre-processing (synchronous - vector search, re-ranking, context building)
         PreProcessResult pp;
         try {
-            pp = preProcess(question, request);
+            pp = preProcess(question, request, conversationId);
         } catch (Exception e) {
             LOG.error("OpenAI STREAM - Error in pre-processing: {}", e.getMessage(), e);
             streamExecutor.execute(() -> {
@@ -408,12 +449,16 @@ public class ChatControllerOpenAI {
      * Shared pre-processing: NCTID extraction, vector search, re-ranking, context building.
      * Used by both chat() and chatStream().
      */
-    private PreProcessResult preProcess(Question question, HttpServletRequest request) {
+    private PreProcessResult preProcess(Question question, HttpServletRequest request, String conversationId) {
         PreProcessResult result = new PreProcessResult();
         result.t0 = System.currentTimeMillis();
 
-        // Extract NCTIDs from current question
-        List<String> currentNCTIDs = extractNCTIDs(question.getQuestion());
+        // Turn follow-up questions ("what dose did they use?") into standalone search queries
+        String searchQuery = rewriteQueryForSearch(question.getQuestion(), conversationId);
+        TIMING_LOG.info("  Query Rewrite:       {}ms", System.currentTimeMillis() - result.t0);
+
+        // Extract NCTIDs from current question (and from the rewritten query, which may carry them over from history)
+        List<String> currentNCTIDs = extractNCTIDs(question.getQuestion() + " " + searchQuery);
 
         // Get NCTIDs from previous conversation (stored in session)
         Set<String> allNCTIDs = new HashSet<>(currentNCTIDs);
@@ -428,39 +473,43 @@ public class ChatControllerOpenAI {
         }
         result.t1 = System.currentTimeMillis();
 
-        // STAGE 1: Broad retrieval - Get top 80 candidates from semantic search WITH SCORES
+        // STAGE 1: Broad retrieval - Get top candidates from semantic search WITH SCORES
         List<Document> candidates;
         if (openaiVectorStore instanceof PostgresVectorStoreOpenAI) {
             PostgresVectorStoreOpenAI vectorStoreWithScores = (PostgresVectorStoreOpenAI) openaiVectorStore;
             candidates = vectorStoreWithScores.similaritySearchWithScores(
-                    SearchRequest.query(question.getQuestion())
-                            .withTopK(80)
-                            .withSimilarityThreshold(0.35));
+                    SearchRequest.query(searchQuery)
+                            .withTopK(candidateCount)
+                            .withSimilarityThreshold(similarityThreshold));
         } else {
             candidates = openaiVectorStore.similaritySearch(
-                    SearchRequest.query(question.getQuestion())
-                            .withTopK(80)
-                            .withSimilarityThreshold(0.35));
+                    SearchRequest.query(searchQuery)
+                            .withTopK(candidateCount)
+                            .withSimilarityThreshold(similarityThreshold));
         }
         result.t2 = System.currentTimeMillis();
         LOG.info("Stage 1: Retrieved {} candidates from semantic similarity search", candidates.size());
 
         // STAGE 2: Re-rank using semantic + keyword scoring
-        List<Document> documents = rerankDocuments(candidates, question.getQuestion());
+        List<Document> documents = rerankDocuments(candidates, searchQuery);
 
-        // Take top 40 after re-ranking
-        if (documents.size() > 40) {
-            documents = documents.subList(0, 40);
-        }
+        // STAGE 3: Select context - skip duplicate chunk text, cap chunks per source
+        documents = selectContextDocuments(documents);
         result.t3 = System.currentTimeMillis();
         LOG.info("Stage 2: Re-ranked and selected top {} documents", documents.size());
 
         // Add documents for all mentioned NCTIDs (current question + conversation history)
         if (!allNCTIDs.isEmpty()) {
             int initialSize = documents.size();
+            Set<String> includedChunks = new HashSet<>();
+            documents.forEach(d -> includedChunks.add(d.getContent()));
             for (String nctid : allNCTIDs) {
-                List<Document> nctidDocs = getDocumentsByNCTID(nctid);
-                documents.addAll(nctidDocs);
+                for (Document nctidDoc : getDocumentsByNCTID(nctid)) {
+                    // Skip chunks already selected by the similarity search
+                    if (includedChunks.add(nctidDoc.getContent())) {
+                        documents.add(nctidDoc);
+                    }
+                }
             }
             int addedCount = documents.size() - initialSize;
             LOG.info("Added {} documents for {} NCTIDs mentioned in conversation", addedCount, allNCTIDs.size());
@@ -482,7 +531,9 @@ public class ChatControllerOpenAI {
             if (filename.startsWith("NCT") && filename.contains(":")) {
                 filename = filename.split(":")[0];
             }
-            if (!filename.equals("unknown") && !filename.startsWith("NCT")) {
+            // Summary documents have no PDF to link to
+            if (!filename.equals("unknown") && !filename.startsWith("NCT")
+                    && !filename.startsWith(ACTIVE_TRIAL_SUMMARY_PREFIX)) {
                 result.usedFilenames.add(filename);
             }
             contextBuilder.append(String.format("--- FROM: %s ---\n%s\n\n", filename, doc.getContent()));
@@ -588,6 +639,8 @@ public class ChatControllerOpenAI {
            Example: [[Guidance for Industry M4 The CTD - General Questions and Answers.md]]
            Do NOT wrap clinical trial references (filenames starting with
            CLINICAL) - those are handled separately via their NCT IDs.
+           Do NOT wrap summary documents (filenames starting with
+           ACTIVE TRIAL SUMMARY) - name the individual trials and their NCT IDs instead.
 
         SOURCE REPORTING (REQUIRED):
 
@@ -662,6 +715,118 @@ public class ChatControllerOpenAI {
     }
 
     /**
+     * Rewrite a follow-up question into a standalone search query using recent conversation
+     * history, so vector search can find the trial/drug/document being referred to.
+     * Returns the original question when there is no history or the rewrite fails.
+     */
+    private String rewriteQueryForSearch(String question, String conversationId) {
+        if (!queryRewriteEnabled || question == null || question.isBlank()) {
+            return question;
+        }
+
+        List<Message> history = chatMemory.get(conversationId, queryRewriteHistoryMessages);
+        if (history.isEmpty()) {
+            return question;
+        }
+
+        StringBuilder transcript = new StringBuilder();
+        for (Message message : history) {
+            if (message.getMessageType() != MessageType.USER && message.getMessageType() != MessageType.ASSISTANT) {
+                continue;
+            }
+            String text = message.getContent();
+            // Long answers only need their gist to resolve references like "it" or "that trial"
+            if (text.length() > 1500) {
+                text = text.substring(0, 1500) + "...";
+            }
+            transcript.append(message.getMessageType() == MessageType.USER ? "User: " : "Assistant: ")
+                    .append(text).append("\n\n");
+        }
+
+        try {
+            String rewritten = openAiChatModel.call(new Prompt(
+                    List.of(
+                            new SystemMessage("""
+                                You rewrite the user's latest question into a standalone search query
+                                for a document search engine about clinical trials, FDA guidance
+                                documents and FDA meeting notes.
+                                - Resolve references such as "it", "they", "that trial" or "the second one"
+                                  using the conversation.
+                                - Keep NCT IDs, drug names, diseases, genes and document names exactly as written.
+                                - If the question is already standalone, return it unchanged.
+                                - Output only the rewritten query, with no explanation.
+                                """),
+                            new UserMessage("Conversation so far:\n" + transcript
+                                    + "Latest question: " + question)),
+                    OpenAiChatOptions.builder()
+                            .withModel(queryRewriteModel)
+                            .withTemperature(1.0)
+                            .build()))
+                    .getResult().getOutput().getContent();
+
+            if (rewritten == null || rewritten.isBlank()) {
+                return question;
+            }
+            rewritten = rewritten.trim();
+            LOG.info("Query rewrite: \"{}\" -> \"{}\"", question, rewritten);
+            return rewritten;
+
+        } catch (Exception e) {
+            LOG.warn("Query rewrite failed, searching with the original question: {}", e.getMessage());
+            return question;
+        }
+    }
+
+    /**
+     * Pick the context chunks from the re-ranked list: skip chunks whose text is identical to one
+     * already selected (the same regulation text is stored under many file names), and cap how
+     * many chunks a single source can contribute so one long document cannot fill the context.
+     */
+    private List<Document> selectContextDocuments(List<Document> ranked) {
+        List<Document> selected = new ArrayList<>();
+        Set<String> seenText = new HashSet<>();
+        Map<String, Integer> chunksPerSource = new HashMap<>();
+        int duplicates = 0;
+        int capped = 0;
+
+        for (Document doc : ranked) {
+            if (selected.size() >= contextChunks) {
+                break;
+            }
+            if (!seenText.add(chunkTextWithoutLabel(doc.getContent()))) {
+                duplicates++;
+                continue;
+            }
+            String source = doc.getMetadata().getOrDefault("filename", "unknown").toString();
+            int count = chunksPerSource.getOrDefault(source, 0);
+            if (count >= maxChunksPerSource) {
+                capped++;
+                continue;
+            }
+            chunksPerSource.put(source, count + 1);
+            selected.add(doc);
+        }
+
+        LOG.info("Context selection: kept {} of {} ranked chunks ({} duplicate text, {} over per-source cap of {})",
+                selected.size(), ranked.size(), duplicates, capped, maxChunksPerSource);
+        return selected;
+    }
+
+    /**
+     * Chunk text without the "[source label]" line added at load time, so identical text stored
+     * under different file names is recognized as a duplicate.
+     */
+    private String chunkTextWithoutLabel(String content) {
+        if (content != null && content.startsWith("[")) {
+            int newline = content.indexOf('\n');
+            if (newline > 0 && content.charAt(newline - 1) == ']') {
+                return content.substring(newline + 1).trim();
+            }
+        }
+        return content == null ? "" : content.trim();
+    }
+
+    /**
      * Extract meaningful query terms (removing stop words)
      */
     private Set<String> extractQueryTerms(String query) {
@@ -707,6 +872,14 @@ public class ChatControllerOpenAI {
             return candidates;
         }
 
+        // Whole-word, case-insensitive matching ("aav" must not match inside another word,
+        // and upper-case NCT IDs must match lower-case or upper-case chunk text)
+        List<java.util.regex.Pattern> termPatterns = queryTerms.stream()
+                .map(term -> java.util.regex.Pattern.compile(
+                        "\\b" + java.util.regex.Pattern.quote(term) + "\\b",
+                        java.util.regex.Pattern.CASE_INSENSITIVE))
+                .collect(java.util.stream.Collectors.toList());
+
         // Score and sort documents
         List<ScoredDocument> scoredDocs = candidates.stream()
                 .map(doc -> {
@@ -715,9 +888,9 @@ public class ChatControllerOpenAI {
                     double semanticScore = 1.0 - distance; // Convert distance to similarity
 
                     // Calculate keyword match score
-                    String content = doc.getContent().toLowerCase();
-                    long matchCount = queryTerms.stream()
-                            .filter(term -> content.contains(term))
+                    String content = doc.getContent();
+                    long matchCount = termPatterns.stream()
+                            .filter(pattern -> pattern.matcher(content).find())
                             .count();
                     double keywordScore = (double) matchCount / queryTerms.size();
 
