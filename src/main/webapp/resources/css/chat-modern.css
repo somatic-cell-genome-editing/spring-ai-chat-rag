@@ -54,6 +54,19 @@ body.chat-modern .header-icon {
     font-size: 18px;
 }
 
+body.chat-modern .header-icon-logo {
+    width: auto;
+    height: 48px;
+    border-radius: 0;
+    background: none;
+}
+
+body.chat-modern .header-icon-logo img {
+    height: 100%;
+    width: auto;
+    display: block;
+}
+
 body.chat-modern .header-text {
     flex-grow: 1;
     min-width: 0;

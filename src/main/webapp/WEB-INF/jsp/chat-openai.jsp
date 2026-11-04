@@ -97,7 +97,9 @@
 <%--            <a href="<%= chatPlatformBase %>/platform/home">--%>
 <%--                <img src="<%= chatPlatformBase %>/platform/common/images/SCGE_Platform_logo_5.jpg" alt="SCGE Platform Logo" class="header-logo"/>--%>
 <%--            </a>--%>
-            <div class="header-icon"><i class="fa-solid fa-dna"></i></div>
+            <a href="<%= chatPlatformBase %>/platform/home" class="header-icon header-icon-logo">
+                <img src="<%= chatPlatformBase %>/platform/common/images/SCGE_Platform_logo_5.jpg" alt="SCGE Platform"/>
+            </a>
             <div class="header-text">
                 <h2>SCGE Platform AI Assistant</h2>
                 <div class="header-subtitle">Gene therapy clinical trials &middot; FDA guidance &middot; FDA meeting notes</div>
