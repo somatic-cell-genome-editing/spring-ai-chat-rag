@@ -1,5 +1,6 @@
 package edu.mcw.rgdai.controller;
 
+import edu.mcw.rgdai.service.ChunkLabeler;
 import edu.mcw.rgdai.service.DocumentPreprocessor;
 import edu.mcw.scge.dao.implementation.DocumentEmbeddingDAO;
 import edu.mcw.scge.datamodel.DocumentEmbeddingSummary;
@@ -199,7 +200,8 @@ public class CurationController {
                     .withKeepSeparator(true)
                     .build();
 
-            List<Document> splitDocuments = splitter.apply(preprocessedDocs);
+            List<Document> splitDocuments = ChunkLabeler.applyLabels(
+                    splitter.apply(ChunkLabeler.addLabels(preprocessedDocs)));
             LOG.info("Split into {} chunks after preprocessing", splitDocuments.size());
 
             // Log sample of processed content
