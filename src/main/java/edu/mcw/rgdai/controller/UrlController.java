@@ -73,7 +73,8 @@ public class UrlController {
             // Get NCT IDs from CurDS database using custom datasource
             DataSource curationDS = DataSourceFactory.getInstance().getScgePlatformDataSource();
             ClinicalTrailDAO dao = new ClinicalTrailDAO(curationDS);
-            List<String> nctIds = dao.getAllNctIds();
+            // Only Active records are published in the SCGE Trial Browser
+            List<String> nctIds = dao.getNctIdsByRecordStatus("Active");
             LOG.info("Retrieved {} NCT IDs from CurDS database", nctIds.size());
 
             // COMMENTED OUT - Hardcoded NCT IDs list (380 IDs from query select nctId from clinical_trial_record)
