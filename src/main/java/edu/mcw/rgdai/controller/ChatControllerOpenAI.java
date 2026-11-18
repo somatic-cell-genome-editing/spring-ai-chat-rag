@@ -57,8 +57,10 @@ public class ChatControllerOpenAI {
     private final DocumentEmbeddingOpenAIRepository repository;
     private final RecaptchaService recaptchaService;
     private static final String CHAT_MEMORY_CONVERSATION_ID_KEY = "chat_memory_conversation_id";
-    // Filename prefix of the generated Active trial summary documents (clinical-trials-rag-load-pipeline)
-    private static final String ACTIVE_TRIAL_SUMMARY_PREFIX = "ACTIVE TRIAL SUMMARY";
+    // Filename prefixes of the generated trial summary documents (clinical-trials-rag-load-pipeline);
+    // "ACTIVE TRIAL SUMMARY" is the older name, used when only Active trials were summarized
+    private static final String TRIAL_SUMMARY_PREFIX = "TRIAL SUMMARY";
+    private static final String OLD_TRIAL_SUMMARY_PREFIX = "ACTIVE TRIAL SUMMARY";
     // Filename prefix of clinical trial pages loaded by clinical-trials-rag-load-pipeline
     private static final String CLINICAL_TRIAL_PREFIX = "CLINICAL TRIAL: ";
 
@@ -181,7 +183,7 @@ public class ChatControllerOpenAI {
            - Do NOT wrap clinical trials (sources starting with CLINICAL TRIAL) -
              refer to them by NCT ID.
            - Do NOT wrap summary documents (sources starting with
-             ACTIVE TRIAL SUMMARY) - name the individual trials and their NCT IDs instead.
+             TRIAL SUMMARY) - name the individual trials and their NCT IDs instead.
            - Web pages (documents with a url="..." attribute) are cited as
              Markdown links: [source name](url).
 
@@ -683,7 +685,8 @@ public class ChatControllerOpenAI {
             // Trials link through their NCT IDs; summaries and web pages have no /docs file
             if (url == null && !filename.equals("unknown") && !filename.startsWith("NCT")
                     && !filename.startsWith(CLINICAL_TRIAL_PREFIX)
-                    && !filename.startsWith(ACTIVE_TRIAL_SUMMARY_PREFIX)) {
+                    && !filename.startsWith(TRIAL_SUMMARY_PREFIX)
+                    && !filename.startsWith(OLD_TRIAL_SUMMARY_PREFIX)) {
                 result.usedFilenames.add(filename);
             }
 
