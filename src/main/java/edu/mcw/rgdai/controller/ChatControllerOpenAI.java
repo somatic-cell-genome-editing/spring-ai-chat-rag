@@ -184,8 +184,8 @@ public class ChatControllerOpenAI {
              refer to them by NCT ID.
            - Do NOT wrap summary documents (sources starting with
              TRIAL SUMMARY) - name the individual trials and their NCT IDs instead.
-           - Web pages (documents with a url="..." attribute) are cited as
-             Markdown links: [source name](url).
+           - Sources with a url="..." attribute (web pages and online PDF documents)
+             are cited as Markdown links: [source name](url).
 
         12. WHEN YOU CAN'T FIND THE ANSWER
            - Never mention "the context", "the documents provided", "my knowledge
@@ -214,8 +214,8 @@ public class ChatControllerOpenAI {
 
         Guidelines:
         - List only the sources you actually used to answer the question.
-        - Use the exact names from the source="..." attributes; for web pages use
-          the Markdown link [source name](url).
+        - Use the exact names from the source="..." attributes; for sources with a
+          url="..." attribute use the Markdown link [source name](url).
         - Separate multiple sources with "; " (a semicolon and a space).
         - If no sources were used, write exactly:
           SOURCES_USED: None
