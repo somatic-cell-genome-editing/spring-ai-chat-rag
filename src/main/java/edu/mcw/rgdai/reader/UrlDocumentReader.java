@@ -3,7 +3,11 @@ package edu.mcw.rgdai.reader;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import org.jsoup.nodes.Node;
+import org.jsoup.nodes.TextNode;
 import org.jsoup.select.Elements;
+import org.jsoup.select.NodeTraversor;
+import org.jsoup.select.NodeVisitor;
 import org.springframework.ai.document.DocumentReader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -154,66 +158,68 @@ public class UrlDocumentReader implements DocumentReader {
         return result;
     }
 
+    // Repeated lines at least this long are dropped as duplicate tab/toggle copies
+    private static final int MIN_DEDUPLICATED_LINE = 80;
+
+    // Elements that start a new line of text in the extracted content
+    private static final Set<String> BLOCK_TAGS = Set.of(
+            "address", "article", "aside", "blockquote", "br", "dd", "div", "dl", "dt", "fieldset",
+            "figcaption", "figure", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "li", "main", "ol",
+            "p", "pre", "section", "table", "tbody", "tfoot", "thead", "tr", "ul");
+
     /**
-     * Extract content from generic webpages
+     * Extract content from generic webpages. Walks every text node of the main content in page
+     * order and starts a new line at each block element, so text is kept wherever the page
+     * builder puts it - plain divs, collapsible sections and tabs included (e.g. the Avada
+     * theme on scge.mcw.edu). Table cells are joined with " | "; long repeated lines (tabs
+     * often have a desktop and a mobile copy) are kept once.
      */
     private String extractGenericContent(Document doc) {
-        StringBuilder content = new StringBuilder();
-
-        Element mainContent = doc.select("#main, .main, .content, main, article, .container").first();
+        Element mainContent = doc.selectFirst("main, #main, article, .post-content, .entry-content, #content, .content");
         if (mainContent == null) {
             mainContent = doc.body();
         }
+        mainContent = mainContent.clone();
+        mainContent.select("header, aside, form, button, .sidebar, #sidebar, .breadcrumbs, "
+                + ".fusion-sharing-box, .related-posts, .screen-reader-text, .fusion-mobile-tab-nav").remove();
 
-        // Extract main heading
-        Element h1 = mainContent.select("h1").first();
-        if (h1 != null) {
-            content.append("=== ").append(h1.text().trim()).append(" ===\n\n");
-        }
-
-        // Extract tables
-        Elements tables = mainContent.select("table");
-        for (Element table : tables) {
-            content.append(extractGenericTableData(table));
-        }
-
-        // Extract definition lists
-        Elements dls = mainContent.select("dl");
-        for (Element dl : dls) {
-            Elements terms = dl.select("dt");
-            Elements definitions = dl.select("dd");
-            for (int i = 0; i < Math.min(terms.size(), definitions.size()); i++) {
-                String term = terms.get(i).text().trim();
-                String definition = definitions.get(i).text().trim();
-                if (!term.isEmpty() && !definition.isEmpty()) {
-                    content.append(term).append(": ").append(definition).append("\n");
-                }
-            }
-        }
-
-        // Extract sections with headers
-        Elements headers = mainContent.select("h2, h3, h4");
-        for (Element header : headers) {
-            String headerText = header.text().trim();
-            if (!headerText.isEmpty()) {
-                content.append("\n").append(headerText).append(":\n");
-
-                Element next = header.nextElementSibling();
-                while (next != null && !next.tagName().matches("h[1-6]")) {
-                    String text = next.text().trim();
-                    if (!text.isEmpty() && text.length() < 500) {
-                        content.append(text).append("\n");
-                    }
-
-                    if (next.tagName().equals("ul") || next.tagName().equals("ol")) {
-                        Elements items = next.select("li");
-                        for (Element item : items) {
-                            content.append("- ").append(item.text().trim()).append("\n");
+        List<String> lines = new ArrayList<>();
+        StringBuilder line = new StringBuilder();
+        NodeTraversor.traverse(new NodeVisitor() {
+            @Override
+            public void head(Node node, int depth) {
+                if (node instanceof TextNode textNode) {
+                    line.append(textNode.text());
+                } else if (node instanceof Element element) {
+                    String tag = element.tagName();
+                    if (tag.equals("td") || tag.equals("th")) {
+                        if (!line.toString().isBlank()) {
+                            line.append(" | ");
+                        }
+                    } else if (BLOCK_TAGS.contains(tag)) {
+                        addLine(lines, line, false);
+                        if (tag.equals("li")) {
+                            line.append("- ");
                         }
                     }
-
-                    next = next.nextElementSibling();
                 }
+            }
+
+            @Override
+            public void tail(Node node, int depth) {
+                if (node instanceof Element element && BLOCK_TAGS.contains(element.tagName())) {
+                    addLine(lines, line, element.tagName().matches("h[1-6]"));
+                }
+            }
+        }, mainContent);
+        addLine(lines, line, false);
+
+        StringBuilder content = new StringBuilder();
+        Set<String> seenLines = new HashSet<>();
+        for (String text : lines) {
+            // Only long repeats are tab/toggle copies; short labels ("Advocacy Groups:") repeat legitimately
+            if (text.length() < MIN_DEDUPLICATED_LINE || seenLines.add(text)) {
+                content.append(text.endsWith(":") && !text.startsWith("- ") ? "\n" : "").append(text).append("\n");
             }
         }
 
@@ -223,6 +229,18 @@ public class UrlDocumentReader implements DocumentReader {
         }
 
         return result;
+    }
+
+    private static void addLine(List<String> lines, StringBuilder line, boolean heading) {
+        String text = line.toString().replaceAll("\\s+", " ").trim();
+        line.setLength(0);
+        if (text.isEmpty() || text.equals("-")) {
+            return;
+        }
+        if (heading && !text.endsWith(":")) {
+            text = text + ":";
+        }
+        lines.add(text);
     }
 
     /**
@@ -271,36 +289,6 @@ public class UrlDocumentReader implements DocumentReader {
         return tableContent.toString();
     }
 
-    /**
-     * Extract data from generic tables
-     */
-    private String extractGenericTableData(Element table) {
-        StringBuilder tableContent = new StringBuilder();
-        Elements rows = table.select("tr");
-
-        for (Element row : rows) {
-            Elements cells = row.select("td, th");
-
-            if (cells.size() == 2) {
-                String label = cells.get(0).text().trim();
-                String value = cells.get(1).text().trim();
-
-                if (!label.isEmpty()) {
-                    tableContent.append(label).append(": ").append(value).append("\n");
-                }
-            } else if (cells.size() > 0) {
-                for (Element cell : cells) {
-                    String text = cell.text().trim();
-                    if (!text.isEmpty()) {
-                        tableContent.append(text).append(" | ");
-                    }
-                }
-                tableContent.append("\n");
-            }
-        }
-
-        return tableContent.toString();
-    }
 
     /**
      * Extract external links grouped by type
